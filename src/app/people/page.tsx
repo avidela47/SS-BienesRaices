@@ -216,8 +216,21 @@ export default function PeoplePage() {
                     </button>
                     <Link
                         href="/people/new"
-                        className="rounded-xl border px-4 py-2 text-sm text-white transition flex items-center gap-2 shadow hover:brightness-110 hover:border-white"
-                        style={{ fontWeight: 400, background: 'var(--benetton-green)', borderColor: 'var(--benetton-green)', boxShadow: '0 0 16px 2px #00A65155' }}
+                        style={{
+                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                          background: 'rgba(16, 185, 129, 0.15)',
+                          color: '#6ee7b7',
+                          borderRadius: '0.75rem',
+                          padding: '0.375rem 0.75rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          boxShadow: 'none',
+                          textDecoration: 'none',
+                          cursor: 'pointer'
+                        }}
                     >
                         +Alta Cliente
                     </Link>
@@ -413,14 +426,14 @@ export default function PeoplePage() {
                             <div className="flex gap-2 mt-2">
                                 <button
                                     type="submit"
-                                    className="flex-1 rounded-xl bg-emerald-700 hover:bg-emerald-800 px-4 py-2 text-white transition"
+                                    className="btn-benetton-green flex-1 rounded-xl px-4 py-2 text-white shadow"
                                     disabled={editLoading}
                                 >
                                     {editLoading ? "Guardando..." : "Guardar"}
                                 </button>
                                 <button
                                     type="button"
-                                    className="flex-1 rounded-xl bg-red-700 hover:bg-red-800 px-4 py-2 text-white transition"
+                                    className="btn-benetton-red flex-1 rounded-xl px-4 py-2 text-white shadow"
                                     disabled={deleteLoading}
                                     onClick={() => setDeleteConfirm(true)}
                                 >
@@ -432,7 +445,7 @@ export default function PeoplePage() {
                                     <div className="mb-2">¿Seguro que deseas eliminar este cliente?</div>
                                     <button
                                         type="button"
-                                        className="rounded bg-red-700 hover:bg-red-800 px-3 py-1 text-white mr-2"
+                                        className="btn-benetton-red rounded px-3 py-1 text-white mr-2 shadow"
                                         onClick={handleDelete}
                                         disabled={deleteLoading}
                                     >
@@ -440,7 +453,7 @@ export default function PeoplePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="rounded bg-neutral-700 hover:bg-neutral-800 px-3 py-1 text-white"
+                                        className="btn-benetton-blue rounded px-3 py-1 text-white shadow"
                                         onClick={() => setDeleteConfirm(false)}
                                         disabled={deleteLoading}
                                     >

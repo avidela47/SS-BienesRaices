@@ -44,8 +44,21 @@ export default function Propiedades() {
         </div>
         <Link
           href="/properties/new"
-          className="rounded-xl border px-4 py-2 text-sm text-white transition flex items-center gap-2 shadow"
-          style={{ fontWeight: 400, background: 'var(--benetton-green)', borderColor: 'var(--benetton-green)', boxShadow: '0 0 16px 2px #00A65155' }}
+          style={{
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            background: 'rgba(16, 185, 129, 0.15)',
+            color: '#6ee7b7',
+            borderRadius: '0.75rem',
+            padding: '0.375rem 0.75rem',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            boxShadow: 'none',
+            textDecoration: 'none',
+            cursor: 'pointer'
+          }}
         >
           +Alta Propiedad
         </Link>
@@ -71,15 +84,15 @@ export default function Propiedades() {
                   <div className="flex items-center gap-2 text-xs text-neutral-400">
                     <span>Propietario: {typeof p.ownerId === "object" ? p.ownerId.fullName : p.ownerId}</span>
                     <button
-                      className="ml-2 px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs transition shadow"
+                      className="ml-2 px-2 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs transition shadow cursor-pointer"
                       onClick={() => setSelected(p)}
                     >Ver</button>
                     <button
-                      className="px-2 py-1 rounded bg-blue-600/80 hover:bg-blue-700 text-white border border-blue-700 text-xs transition shadow"
+                      className="border border-blue-400 text-white bg-transparent px-2 py-1 rounded-full text-xs hover:bg-blue-400/10 transition cursor-pointer"
                       onClick={() => setEditTarget(p)}
                     >Editar</button>
                     <button
-                      className="px-2 py-1 rounded bg-red-600/80 hover:bg-red-700 text-white border border-red-700 text-xs transition shadow"
+                      className="border border-red-400 text-white bg-transparent px-2 py-1 rounded-full text-xs hover:bg-red-400/10 transition cursor-pointer"
                       onClick={() => setDeleteTarget(p)}
                     >Eliminar</button>
                   </div>

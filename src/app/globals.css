@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./benetton-buttons.css";
 
 :root {
   --background: #0B0B0F;

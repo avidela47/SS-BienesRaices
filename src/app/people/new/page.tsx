@@ -120,7 +120,17 @@ export default function NewClientPage() {
           {error && <div className="text-red-400 text-sm text-center">{error}</div>}
           <button
             type="submit"
-            className="w-full rounded-xl bg-emerald-700 hover:bg-emerald-800 px-4 py-2 text-white transition"
+            style={{
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              background: 'rgba(16, 185, 129, 0.15)',
+              color: '#6ee7b7',
+              borderRadius: '0.75rem',
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              width: '100%',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
             disabled={loading}
           >
             {loading ? "Guardando..." : "Guardar Cliente"}

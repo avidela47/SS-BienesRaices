@@ -323,7 +323,7 @@ export default function ContractsPage() {
                   documents: [],
                 });
               }}
-              className="rounded-xl border bg-green-600 px-4 py-2 text-sm text-white font-semibold shadow hover:brightness-110 transition cursor-pointer"
+              className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 text-emerald-200 px-3 py-1.5 text-xs font-semibold cursor-pointer"
               type="button"
             >
               +Alta Contrato
@@ -692,7 +692,7 @@ export default function ContractsPage() {
             <div className="w-full flex justify-center mt-6">
               <button
                 type="button"
-                className="rounded-xl px-6 py-2 text-white font-semibold shadow bg-green-600 hover:brightness-110 text-base disabled:opacity-60"
+                className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 text-emerald-200 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-60"
                 disabled={guardando}
                 onClick={async () => {
                   setErrorAlta('');
