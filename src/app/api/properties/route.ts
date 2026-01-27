@@ -27,6 +27,9 @@ async function nextPropertyCode(): Promise<string> {
   return `PID-${pad3(seq)}`;
 }
 
+const ALLOWED_STATUS = ["AVAILABLE", "RENTED", "MAINTENANCE"] as const;
+type AllowedStatus = (typeof ALLOWED_STATUS)[number];
+
 export async function GET() {
   try {
     await dbConnect();
@@ -51,14 +54,17 @@ export async function POST(req: Request) {
     await dbConnect();
     const body: unknown = await req.json();
 
-
     const data = body as Partial<{
       addressLine: string;
       unit: string;
       city: string;
       province: string;
+
       ownerId: string;
-      code: string; // opcional
+      code: string;
+
+      status: AllowedStatus;
+
       tipo: string;
       foto: string;
       mapa: string;
@@ -88,16 +94,23 @@ export async function POST(req: Request) {
         ? String(data.code).trim()
         : await nextPropertyCode();
 
+    const status: AllowedStatus = ALLOWED_STATUS.includes(data.status as AllowedStatus)
+      ? (data.status as AllowedStatus)
+      : "AVAILABLE";
 
     const property = await Property.create({
       tenantId: TENANT_ID,
       code,
+
       addressLine: String(data.addressLine).trim(),
       unit: data.unit ? String(data.unit).trim() : "",
       city: data.city ? String(data.city).trim() : "",
       province: data.province ? String(data.province).trim() : "",
-      status: "AVAILABLE",
+
+      status,
+
       ownerId: data.ownerId,
+
       tipo: data.tipo ? String(data.tipo).trim() : undefined,
       foto: data.foto ? String(data.foto).trim() : undefined,
       mapa: data.mapa ? String(data.mapa).trim() : undefined,

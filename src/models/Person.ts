@@ -13,10 +13,17 @@ const PersonSchema = new Schema(
     fullName: { type: String, required: true, trim: true },
     dniCuit: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true, index: true },
-    phone: { type: String, trim: true }, // WhatsApp
+
+    // ✅ WhatsApp (se guarda acá)
+    phone: { type: String, trim: true },
+
     address: { type: String, trim: true },
     tags: { type: [String], default: [] },
     notes: { type: String, trim: true },
+
+    // ✅ SOLO para GARANTES: a qué inquilino garantiza
+    // (es un Person _id con type TENANT)
+    tenantPersonId: { type: Schema.Types.ObjectId, ref: "Person", index: true, default: null },
   },
   { timestamps: true }
 );
@@ -36,6 +43,10 @@ export type PersonDoc = {
   address?: string;
   tags?: string[];
   notes?: string;
+
+  // ✅ relación garante -> inquilino
+  tenantPersonId?: Types.ObjectId | null;
+
   createdAt: Date;
   updatedAt: Date;
 };

@@ -144,7 +144,7 @@ export default function NuevaPropiedad() {
           <div className="md:col-span-2">
             <button
               type="submit"
-              className="btn-benetton-green w-full rounded-xl px-4 py-2 text-sm font-semibold shadow mt-4"
+              className="w-full rounded-xl px-4 py-2 text-sm text-white font-semibold shadow bg-(--benetton-green) hover:brightness-110 mt-4"
               style={{ fontWeight: 400 }}
             >
               Crear Propiedad

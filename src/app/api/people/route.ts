@@ -5,12 +5,7 @@ import Counter from "@/models/Counter";
 
 const TENANT_ID = "default";
 
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return "unknown";
-}
-
-function pad3(n: number): string {
+function pad3(n: number) {
   return String(n).padStart(3, "0");
 }
 
@@ -20,7 +15,7 @@ function prefixByType(type: string): "OID" | "TID" | "GID" {
   return "GID";
 }
 
-async function nextPersonCode(personType: "OWNER" | "TENANT" | "GUARANTOR"): Promise<string> {
+async function nextPersonCode(personType: "OWNER" | "TENANT" | "GUARANTOR") {
   const prefix = prefixByType(personType);
   const key = `person:${prefix}`;
 
@@ -30,89 +25,81 @@ async function nextPersonCode(personType: "OWNER" | "TENANT" | "GUARANTOR"): Pro
     { new: true, upsert: true }
   ).lean();
 
-  const seq = doc?.seq ?? 1;
-  return `${prefix}-${pad3(seq)}`;
+  return `${prefix}-${pad3(doc?.seq ?? 1)}`;
 }
 
-export async function GET() {
-  try {
-    await dbConnect();
+export async function GET(req: Request) {
+  await dbConnect();
 
-    const people = await Person.find({ tenantId: TENANT_ID })
-      .sort({ createdAt: -1 })
-      .lean();
+  const url = new URL(req.url);
+  const type = url.searchParams.get("type");
 
-    return NextResponse.json({ ok: true, people });
-  } catch (err: unknown) {
-    return NextResponse.json(
-      { ok: false, message: "Failed to fetch people", error: getErrorMessage(err) },
-      { status: 500 }
-    );
-  }
+  const filter: { tenantId: string; type?: string } = { tenantId: TENANT_ID };
+  if (type) filter.type = String(type).toUpperCase();
+
+  const people = await Person.find(filter).sort({ createdAt: -1 }).lean();
+  return NextResponse.json({ ok: true, people });
 }
 
 export async function POST(req: Request) {
-  try {
-    await dbConnect();
-    const body: unknown = await req.json();
+  await dbConnect();
+  const data = await req.json();
 
-    const data = body as Partial<{
-      type: string;
-      fullName: string;
-      dni?: string;
-      dniCuit?: string;
-      wasp?: string;
-      phone?: string;
-      email?: string;
-      address?: string;
-      tags?: string[];
-      notes?: string;
-      code?: string;
-    }>;
-
-    if (!data.type || !data.fullName) {
-      return NextResponse.json(
-        { ok: false, message: "Missing required fields: type, fullName" },
-        { status: 400 }
-      );
-    }
-
-    const type = String(data.type).toUpperCase();
-    if (!["OWNER", "TENANT", "GUARANTOR"].includes(type)) {
-      return NextResponse.json(
-        { ok: false, message: "Invalid type. Use OWNER | TENANT | GUARANTOR" },
-        { status: 400 }
-      );
-    }
-
-    // Si no mandan code, generamos automático.
-    const code = data.code && String(data.code).trim()
-      ? String(data.code).trim()
-      : await nextPersonCode(type as "OWNER" | "TENANT" | "GUARANTOR");
-
-    // Mapeo correcto de campos para guardar en Mongo
-    const dniVal = (data.dni && String(data.dni).trim()) || (data.dniCuit && String(data.dniCuit).trim()) || "";
-    const phoneVal = (data.wasp && String(data.wasp).trim()) || (data.phone && String(data.phone).trim()) || "";
-
-    const person = await Person.create({
-      tenantId: TENANT_ID,
-      code,
-      type,
-      fullName: String(data.fullName).trim(),
-      dniCuit: dniVal,
-      email: data.email ? String(data.email).trim().toLowerCase() : "",
-      phone: phoneVal,
-      address: data.address ? String(data.address).trim() : "",
-      tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
-      notes: data.notes ? String(data.notes).trim() : "",
-    });
-
-    return NextResponse.json({ ok: true, personId: person._id, code: person.code });
-  } catch (err: unknown) {
-    return NextResponse.json(
-      { ok: false, message: "Failed to create person", error: getErrorMessage(err) },
-      { status: 500 }
-    );
+  const type = String(data.type || "").toUpperCase();
+  if (!type || !["OWNER", "TENANT", "GUARANTOR"].includes(type)) {
+    return NextResponse.json({ ok: false, message: "Tipo inválido" }, { status: 400 });
   }
-}
+  if (!data.fullName || !String(data.fullName).trim()) {
+    return NextResponse.json({ ok: false, message: "fullName es obligatorio" }, { status: 400 });
+  }
 
+  // ✅ Para garantes: aceptar tenantPersonId o tenantId (compat)
+  const tenantPersonIdRaw =
+    (data.tenantPersonId ? String(data.tenantPersonId).trim() : "") ||
+    (data.tenantId ? String(data.tenantId).trim() : "");
+
+  if (type === "GUARANTOR") {
+    if (!tenantPersonIdRaw) {
+      return NextResponse.json({ ok: false, message: "tenantPersonId es obligatorio" }, { status: 400 });
+    }
+
+    const tenant = await Person.findOne({
+      _id: tenantPersonIdRaw,
+      tenantId: TENANT_ID,
+      type: "TENANT",
+    }).lean();
+
+    if (!tenant) {
+      return NextResponse.json({ ok: false, message: "Inquilino inválido (no existe TENANT)" }, { status: 400 });
+    }
+  }
+
+  const code = await nextPersonCode(type as "OWNER" | "TENANT" | "GUARANTOR");
+
+  // ✅ WhatsApp: guardar en phone
+  const phoneVal = String((data.phone ?? data.wasp ?? "") as string).trim();
+  const dniVal = String((data.dniCuit ?? data.dni ?? "") as string).trim();
+
+  const created = await Person.create({
+    tenantId: TENANT_ID,
+    code,
+    type,
+    fullName: String(data.fullName).trim(),
+    dniCuit: dniVal,
+    phone: phoneVal,
+    email: data.email ? String(data.email).trim() : "",
+    address: data.address ? String(data.address).trim() : "",
+    notes: data.notes ? String(data.notes).trim() : "",
+    tenantPersonId: type === "GUARANTOR" ? tenantPersonIdRaw : null,
+  });
+
+  // ✅ devolvemos el doc creado para actualizar UI sin depender del GET
+  const person = await Person.findById(created._id).lean();
+
+  return NextResponse.json({
+    ok: true,
+    personId: created._id,
+    code: created.code,
+    person,
+  });
+}

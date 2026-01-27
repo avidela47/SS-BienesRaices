@@ -2,7 +2,7 @@
 
 export type TenantId = string;
 
-export type PersonType = "OWNER" | "TENANT";
+export type PersonType = "OWNER" | "TENANT" | "GUARANTOR";
 
 export type PropertyStatus = "AVAILABLE" | "OCCUPIED" | "INACTIVE";
 

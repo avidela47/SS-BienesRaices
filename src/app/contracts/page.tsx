@@ -167,6 +167,48 @@ export default function ContractsPage() {
   const [cuotasModal, setCuotasModal] = useState<{ open: boolean; cuotas: (InstallmentSim & { montoConMora: number })[]; contrato: ContractDTO | null }>({ open: false, cuotas: [], contrato: null });
   // filtros
   // Genera cuotas simuladas según la duración y fechas del contrato
+  function generarCuotasSimuladas(contrato: ContractDTO): (InstallmentSim & { montoConMora: number })[] {
+    const cuotas: (InstallmentSim & { montoConMora: number })[] = [];
+    const duracion = Number(contrato.duracion) || 0;
+    const baseRent = contrato.valorCuota || contrato.billing?.baseRent || 0;
+    const actualizacionCada = Number(contrato.actualizacionCada ?? contrato.billing?.actualizacionCada) || 0;
+    const porcentajeActualizacion = Number(contrato.porcentajeActualizacion ?? contrato.billing?.porcentajeActualizacion) || 0;
+    const lateFeeType = contrato.billing?.lateFeePolicy?.type;
+    const lateFeeValue = Number(contrato.billing?.lateFeePolicy?.value) || 0;
+    const startDate = contrato.startDate ? new Date(contrato.startDate) : null;
+    if (!duracion || !startDate) return [];
+    let montoActual = baseRent;
+    for (let i = 0; i < duracion; i++) {
+      // Aplica actualización si corresponde
+      if (actualizacionCada > 0 && porcentajeActualizacion > 0 && i > 0 && i % actualizacionCada === 0) {
+        montoActual = montoActual + (montoActual * porcentajeActualizacion / 100);
+      }
+      const fechaVenc = new Date(startDate);
+      fechaVenc.setMonth(fechaVenc.getMonth() + i);
+      const periodo = `${fechaVenc.getMonth() + 1}/${fechaVenc.getFullYear()}`;
+      const vencimiento = fechaVenc.toISOString().slice(0, 10);
+      // Calcular mora si está vencida
+      let montoConMora = montoActual;
+      const hoy = new Date();
+      const fechaVencSinHora = new Date(fechaVenc.getFullYear(), fechaVenc.getMonth(), fechaVenc.getDate());
+      if (lateFeeType === 'PERCENT' && lateFeeValue > 0 && hoy > fechaVencSinHora) {
+        // Días de atraso
+        const diffMs = hoy.getTime() - fechaVencSinHora.getTime();
+        const diasAtraso = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        montoConMora = montoActual * Math.pow(1 + lateFeeValue / 100, diasAtraso);
+      }
+      cuotas.push({
+        periodo,
+        vencimiento,
+        monto: montoActual,
+        montoConMora,
+        estado: 'Pendiente',
+        pagado: false,
+        pago: '-',
+      });
+    }
+    return cuotas;
+  }
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [from, setFrom] = useState("");
@@ -323,7 +365,7 @@ export default function ContractsPage() {
                   documents: [],
                 });
               }}
-              className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 text-emerald-200 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+              className="rounded-xl border bg-green-600 px-4 py-2 text-sm text-white font-semibold shadow hover:brightness-110 transition cursor-pointer"
               type="button"
             >
               +Alta Contrato
@@ -692,7 +734,7 @@ export default function ContractsPage() {
             <div className="w-full flex justify-center mt-6">
               <button
                 type="button"
-                className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 text-emerald-200 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-60"
+                className="rounded-xl px-6 py-2 text-white font-semibold shadow bg-green-600 hover:brightness-110 text-base disabled:opacity-60"
                 disabled={guardando}
                 onClick={async () => {
                   setErrorAlta('');
@@ -915,14 +957,19 @@ export default function ContractsPage() {
                     </div>
                     <div className="col-span-1 flex justify-end w-full gap-2">
                       <div className="flex w-full gap-2 justify-start">
-                        <a
-                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition whitespace-nowrap cursor-pointer"
-                          title="Ver cuotas reales"
-                          href={`/contracts/${c._id}/installments`}
-                          style={{ display: 'inline-block', textAlign: 'center' }}
+                        <button
+                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition whitespace-nowrap"
+                          title="Ver"
+                          onClick={() => {
+                            setCuotasModal({
+                              open: true,
+                              cuotas: generarCuotasSimuladas(c),
+                              contrato: c,
+                            });
+                          }}
                         >
                           Ver
-                        </a>
+                        </button>
       {/* Modal de información de contrato al tocar Ver */}
       {cuotasModal.open && cuotasModal.contrato && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
