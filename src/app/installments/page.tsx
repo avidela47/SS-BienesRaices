@@ -1,23 +1,41 @@
-// src/app/installments/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import type { ApiError, ApiOk, InstallmentDTO, PaymentDTO, PaymentMethod } from "@/lib/types";
+import type { ApiError, ApiOk, PaymentDTO, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/ToastProvider";
 
-type InstallmentsApi = ApiOk<InstallmentDTO[]> & { installments: InstallmentDTO[] };
-type PaymentsApi = ApiOk<PaymentDTO[]> & { payments: PaymentDTO[] };
+type MonthlyRentStatus = "PENDING" | "PAID" | "OVERDUE" | "CANCELED";
+
+type MonthlyRentDTO = {
+  _id: string;
+  contractId: string;
+  period: string; // YYYY-MM
+  dueDate: string; // ISO
+  amount: number;
+  status: MonthlyRentStatus;
+  paidAt: string | null;
+};
+
+type TotalsByStatus = {
+  count: number;
+  amount: number;
+};
+
+type MonthlyRentsApiOk = ApiOk<MonthlyRentDTO[]> & {
+  rents: MonthlyRentDTO[];
+  totals?: {
+    count: number;
+    amountTotal: number;
+    byStatus: Record<string, TotalsByStatus>;
+  };
+};
+
+type PaymentsApiOk = ApiOk<PaymentDTO[]> & { payments: PaymentDTO[] };
 
 function formatMoneyARS(n: number): string {
   return n.toLocaleString("es-AR", { style: "currency", currency: "ARS" });
-}
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  return d.toLocaleString("es-AR");
 }
 
 function formatDate(iso: string): string {
@@ -37,15 +55,15 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
 };
 
 export default function InstallmentsPage() {
-  const toast = useToast();
+  const { show } = useToast();
   const searchParams = useSearchParams();
   const focusId = searchParams.get("focus");
 
   const [loading, setLoading] = useState<boolean>(true);
-  const [installments, setInstallments] = useState<InstallmentDTO[]>([]);
+  const [rents, setRents] = useState<MonthlyRentDTO[]>([]);
   const [payments, setPayments] = useState<PaymentDTO[]>([]);
 
-  // Filtros (desktop)
+  // Filtros
   const [q, setQ] = useState<string>("");
   const [status, setStatus] = useState<"ALL" | "PENDING" | "PAID" | "OVERDUE">("ALL");
   const [periodFrom, setPeriodFrom] = useState<string>(""); // YYYY-MM
@@ -53,8 +71,8 @@ export default function InstallmentsPage() {
 
   // Modal pago
   const [payOpen, setPayOpen] = useState<boolean>(false);
-  const [payTarget, setPayTarget] = useState<InstallmentDTO | null>(null);
-  const [payAmount, setPayAmount] = useState<string>("250000");
+  const [payTarget, setPayTarget] = useState<MonthlyRentDTO | null>(null);
+  const [payAmount, setPayAmount] = useState<string>("0");
   const [payMethod, setPayMethod] = useState<PaymentMethod>("CASH");
   const [payRef, setPayRef] = useState<string>("");
   const [payNotes, setPayNotes] = useState<string>("");
@@ -63,29 +81,29 @@ export default function InstallmentsPage() {
   async function loadAll(): Promise<void> {
     setLoading(true);
     try {
-      const [iRes, pRes] = await Promise.all([
-        fetch("/api/installments", { cache: "no-store" }),
+      const [rRes, pRes] = await Promise.all([
+        fetch("/api/monthly-rents", { cache: "no-store" }),
         fetch("/api/payments", { cache: "no-store" }),
       ]);
 
-      const iJson = (await iRes.json()) as InstallmentsApi | ApiError;
-      const pJson = (await pRes.json()) as PaymentsApi | ApiError;
+      const rJson = (await rRes.json()) as MonthlyRentsApiOk | ApiError;
+      const pJson = (await pRes.json()) as PaymentsApiOk | ApiError;
 
-      if (!iRes.ok || !("ok" in iJson) || iJson.ok !== true) {
-        const err = (iJson as ApiError).error || "Error cargando cuotas";
+      if (!rRes.ok || !("ok" in rJson) || rJson.ok !== true) {
+        const err = (rJson as ApiError).error || "Error cargando alquiler mensual";
         throw new Error(err);
       }
+
+      setRents(Array.isArray(rJson.rents) ? rJson.rents : []);
+
       if (!pRes.ok || !("ok" in pJson) || pJson.ok !== true) {
-        // pagos puede estar OK con vacío, pero si falla no rompamos todo
         setPayments([]);
       } else {
-        setPayments(pJson.payments ?? []);
+        setPayments(Array.isArray(pJson.payments) ? pJson.payments : []);
       }
-
-      setInstallments(iJson.installments ?? []);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error inesperado";
-      toast.push({ variant: "error", title: "Cuotas", message: msg });
+      show(`Alquiler mensual: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -108,12 +126,12 @@ export default function InstallmentsPage() {
     const t = window.setTimeout(() => el.classList.remove("animate-pulse"), 1200);
 
     return () => window.clearTimeout(t);
-  }, [focusId, installments]);
+  }, [focusId, rents]);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
 
-    return installments.filter((it) => {
+    return rents.filter((it) => {
       if (status !== "ALL" && it.status !== status) return false;
 
       if (periodFrom && it.period < periodFrom) return false;
@@ -121,7 +139,6 @@ export default function InstallmentsPage() {
 
       if (!qq) return true;
 
-      // Buscador simple: por periodo, id, contrato, monto
       const hay =
         it.period.toLowerCase().includes(qq) ||
         it._id.toLowerCase().includes(qq) ||
@@ -130,24 +147,24 @@ export default function InstallmentsPage() {
 
       return hay;
     });
-  }, [installments, q, status, periodFrom, periodTo]);
+  }, [rents, q, status, periodFrom, periodTo]);
 
   const stats = useMemo(() => {
-    const total = installments.length;
-    const paid = installments.filter((x) => x.status === "PAID").length;
-    const pending = installments.filter((x) => x.status === "PENDING").length;
-    const overdue = installments.filter((x) => x.status === "OVERDUE").length;
+    const total = rents.length;
+    const paid = rents.filter((x) => x.status === "PAID").length;
+    const pending = rents.filter((x) => x.status === "PENDING").length;
+    const overdue = rents.filter((x) => x.status === "OVERDUE").length;
 
-    const pendingAmount = installments
-      .filter((x) => x.status !== "PAID")
-      .reduce((acc, x) => acc + (x.amount - (x.paidAmount || 0)), 0);
+    const pendingAmount = rents
+      .filter((x) => x.status !== "PAID" && x.status !== "CANCELED")
+      .reduce((acc, x) => acc + x.amount, 0);
 
     return { total, paid, pending, overdue, pendingAmount };
-  }, [installments]);
+  }, [rents]);
 
-  function openPayModal(it: InstallmentDTO): void {
+  function openPayModal(it: MonthlyRentDTO): void {
     setPayTarget(it);
-    setPayAmount(String(it.amount - (it.paidAmount || 0)));
+    setPayAmount(String(it.amount));
     setPayMethod("CASH");
     setPayRef("");
     setPayNotes("");
@@ -165,12 +182,14 @@ export default function InstallmentsPage() {
 
     const amountNum = Number(payAmount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      toast.push({ variant: "error", title: "Pago", message: "Importe inválido." });
+      show("Pago: Importe inválido.");
       return;
     }
 
     setPaySubmitting(true);
     try {
+      // ⚠️ Conservamos tu API actual de pagos (usa installmentId).
+      // Luego lo alineamos para que sea monthlyRentId.
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,35 +209,46 @@ export default function InstallmentsPage() {
         throw new Error(err);
       }
 
-      toast.push({ variant: "success", title: "Pago", message: "Pago registrado correctamente." });
+      show("Pago registrado correctamente.");
       closePayModal();
       await loadAll();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error inesperado";
-      toast.push({ variant: "error", title: "Pago", message: msg });
+      show(`Pago: ${msg}`);
     } finally {
       setPaySubmitting(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
-        {/* Header */}
+    <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
+      <div className="mx-auto max-w-6xl">
+        {/* Header (igual a Garantes) */}
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold">Cuotas</h1>
-            <p className="mt-1 text-sm text-white/60">
-              Listado y gestión de cuotas. En desktop, después lo hacemos responsive.
-            </p>
+            <h1 className="text-xl font-semibold">Alquiler mensual</h1>
+            <p className="text-sm opacity-70">Listado y gestión del alquiler mensual</p>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Volver */}
+            <Link
+              href="/"
+              title="Volver"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg"
+            >
+              ←
+            </Link>
+
+            {/* + verde (va a Pagos) */}
             <Link
               href="/payments"
-              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
+              title="Ir a Pagos"
+              aria-label="Ir a Pagos"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              style={{ color: "var(--benetton-green)" }}
             >
-              Ir a Pagos
+              +
             </Link>
           </div>
         </div>
@@ -324,7 +354,7 @@ export default function InstallmentsPage() {
         {/* Table */}
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5">
           <div className="border-b border-white/10 px-5 py-4">
-            <div className="text-sm font-semibold">Cuotas ({filtered.length})</div>
+            <div className="text-sm font-semibold">Alquiler mensual ({filtered.length})</div>
           </div>
 
           <div className="p-4">
@@ -352,7 +382,7 @@ export default function InstallmentsPage() {
                   ) : filtered.length === 0 ? (
                     <tr>
                       <td className="px-4 py-6 text-white/60" colSpan={7}>
-                        No hay cuotas.
+                        No hay alquileres.
                       </td>
                     </tr>
                   ) : (
@@ -367,7 +397,13 @@ export default function InstallmentsPage() {
                           : "border-sky-500/30 text-sky-200 bg-sky-500/10";
 
                       const statusLabel =
-                        row.status === "PAID" ? "PAGADA" : row.status === "OVERDUE" ? "VENCIDA" : "PENDIENTE";
+                        row.status === "PAID"
+                          ? "PAGADA"
+                          : row.status === "OVERDUE"
+                          ? "VENCIDA"
+                          : row.status === "CANCELED"
+                          ? "CANCELADA"
+                          : "PENDIENTE";
 
                       const lastPayment = payments
                         .filter((p) => p.installmentId === row._id)
@@ -417,6 +453,13 @@ export default function InstallmentsPage() {
                               >
                                 Pagada
                               </button>
+                            ) : row.status === "CANCELED" ? (
+                              <button
+                                disabled
+                                className="cursor-not-allowed rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/40"
+                              >
+                                Cancelada
+                              </button>
                             ) : (
                               <button
                                 onClick={() => openPayModal(row)}
@@ -435,7 +478,7 @@ export default function InstallmentsPage() {
             </div>
 
             <div className="mt-3 text-xs text-white/40">
-              Tip: desde Pagos podés entrar directo a la cuota con <span className="font-mono">?focus=...</span>
+              Tip: desde Pagos podés entrar directo al alquiler con <span className="font-mono">?focus=...</span>
             </div>
           </div>
         </div>
@@ -443,12 +486,12 @@ export default function InstallmentsPage() {
 
       {/* Modal pago */}
       {payOpen && payTarget ? (
-        <div className="fixed inset-0 z-9998 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
           <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-black/80 shadow-2xl">
             <div className="border-b border-white/10 px-6 py-5">
               <div className="text-xl font-semibold">Registrar pago</div>
               <div className="mt-1 text-sm text-white/60">
-                Cuota {payTarget.period} — {formatMoneyARS(payTarget.amount)}
+                Alquiler {payTarget.period} — {formatMoneyARS(payTarget.amount)}
               </div>
             </div>
 
@@ -518,6 +561,7 @@ export default function InstallmentsPage() {
           </div>
         </div>
       ) : null}
-    </div>
+    </main>
   );
 }
+

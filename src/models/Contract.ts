@@ -2,11 +2,23 @@ import { Schema, model, models, Types } from "mongoose";
 
 export type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
 
+type BillingAdjustment = {
+  n: number;          // 1,2,3... (orden)
+  percentage: number; // ej: 5, 7, 12.5
+};
+
+const BillingAdjustmentSchema = new Schema<BillingAdjustment>(
+  {
+    n: { type: Number, required: true, min: 1 },
+    percentage: { type: Number, required: true },
+  },
+  { _id: false }
+);
+
 const ContractSchema = new Schema(
   {
     tenantId: { type: String, required: true, index: true },
 
-    // Código humano (CID-001)
     code: { type: String, required: true, trim: true },
 
     propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true, index: true },
@@ -15,6 +27,12 @@ const ContractSchema = new Schema(
 
     startDate: { type: Date, required: true, index: true },
     endDate: { type: Date, required: true, index: true },
+
+    // ✅ Regla oficial: manda duracionMeses
+    duracionMeses: { type: Number, required: true, min: 1 },
+
+    // ✅ Regla oficial: monto base
+    montoBase: { type: Number, required: true, min: 0 },
 
     status: {
       type: String,
@@ -25,10 +43,14 @@ const ContractSchema = new Schema(
 
     billing: {
       dueDay: { type: Number, required: true, min: 1, max: 28 },
-      baseRent: { type: Number, required: true, min: 0 },
       currency: { type: String, default: "ARS" },
-      actualizacionCada: { type: Number, default: 0 },
-      porcentajeActualizacion: { type: Number, default: 0 },
+
+      // ✅ frecuencia pactada (1 mensual / 3 trimestral / 6 semestral...)
+      actualizacionCadaMeses: { type: Number, default: 0, min: 0 },
+
+      // ✅ porcentajes manuales por evento de actualización (en orden)
+      ajustes: { type: [BillingAdjustmentSchema], default: [] },
+
       lateFeePolicy: {
         type: {
           type: String,
@@ -39,8 +61,8 @@ const ContractSchema = new Schema(
       },
       notes: { type: String, default: "" },
     },
-    duracion: { type: Number, default: 0 },
-    montoCuota: { type: Number, default: 0 },
+
+    // extras que ya tenías
     comision: { type: Number, default: 0 },
     expensas: { type: String, default: "no" },
     otrosGastosImporte: { type: Number, default: 0 },
@@ -62,21 +84,28 @@ export type ContractDoc = {
   _id: Types.ObjectId;
   tenantId: string;
   code: string;
+
   propertyId: Types.ObjectId;
   ownerId: Types.ObjectId;
   tenantPersonId: Types.ObjectId;
+
   startDate: Date;
   endDate: Date;
+
+  duracionMeses: number;
+  montoBase: number;
+
   status: ContractStatus;
+
   billing: {
     dueDay: number;
-    baseRent: number;
     currency: string;
-    adjustmentPercent?: number;
-    adjustmentFrequency?: number;
+    actualizacionCadaMeses: number;
+    ajustes: BillingAdjustment[];
     lateFeePolicy: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
     notes: string;
   };
+
   documents: Array<{ type: string; url: string }>;
   createdAt: Date;
   updatedAt: Date;

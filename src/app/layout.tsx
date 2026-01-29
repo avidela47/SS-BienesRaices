@@ -11,8 +11,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "S&S Sotgiu & Soteras Negocios Inmobiliarios",
-  description: "Sistema de gestión inmobiliaria: propiedades, contratos, cuotas, pagos y documentación.",
+  title: "S&S Sotgiu & Soteras | Gestión Inmobiliaria",
+  description:
+    "Plataforma integral de administración inmobiliaria: propiedades, contratos, alquileres, cuotas, pagos, caja y documentación digital.",
 };
 
 export default function RootLayout({
