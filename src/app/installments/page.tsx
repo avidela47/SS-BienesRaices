@@ -1,38 +1,14 @@
+// src/app/installments/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import type { ApiError, ApiOk, PaymentDTO, PaymentMethod } from "@/lib/types";
+import { useSearchParams, useRouter } from "next/navigation";
+import type { ApiError, ApiOk, InstallmentDTO, PaymentDTO, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/ToastProvider";
 
-type MonthlyRentStatus = "PENDING" | "PAID" | "OVERDUE" | "CANCELED";
-
-type MonthlyRentDTO = {
-  _id: string;
-  contractId: string;
-  period: string; // YYYY-MM
-  dueDate: string; // ISO
-  amount: number;
-  status: MonthlyRentStatus;
-  paidAt: string | null;
-};
-
-type TotalsByStatus = {
-  count: number;
-  amount: number;
-};
-
-type MonthlyRentsApiOk = ApiOk<MonthlyRentDTO[]> & {
-  rents: MonthlyRentDTO[];
-  totals?: {
-    count: number;
-    amountTotal: number;
-    byStatus: Record<string, TotalsByStatus>;
-  };
-};
-
-type PaymentsApiOk = ApiOk<PaymentDTO[]> & { payments: PaymentDTO[] };
+type InstallmentsApi = ApiOk<InstallmentDTO[]> & { installments: InstallmentDTO[] };
+type PaymentsApi = ApiOk<PaymentDTO[]> & { payments: PaymentDTO[] };
 
 function formatMoneyARS(n: number): string {
   return n.toLocaleString("es-AR", { style: "currency", currency: "ARS" });
@@ -56,11 +32,12 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
 
 export default function InstallmentsPage() {
   const { show } = useToast();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const focusId = searchParams.get("focus");
 
   const [loading, setLoading] = useState<boolean>(true);
-  const [rents, setRents] = useState<MonthlyRentDTO[]>([]);
+  const [installments, setInstallments] = useState<InstallmentDTO[]>([]);
   const [payments, setPayments] = useState<PaymentDTO[]>([]);
 
   // Filtros
@@ -71,7 +48,7 @@ export default function InstallmentsPage() {
 
   // Modal pago
   const [payOpen, setPayOpen] = useState<boolean>(false);
-  const [payTarget, setPayTarget] = useState<MonthlyRentDTO | null>(null);
+  const [payTarget, setPayTarget] = useState<InstallmentDTO | null>(null);
   const [payAmount, setPayAmount] = useState<string>("0");
   const [payMethod, setPayMethod] = useState<PaymentMethod>("CASH");
   const [payRef, setPayRef] = useState<string>("");
@@ -81,29 +58,29 @@ export default function InstallmentsPage() {
   async function loadAll(): Promise<void> {
     setLoading(true);
     try {
-      const [rRes, pRes] = await Promise.all([
-        fetch("/api/monthly-rents", { cache: "no-store" }),
+      const [iRes, pRes] = await Promise.all([
+        fetch("/api/installments", { cache: "no-store" }),
         fetch("/api/payments", { cache: "no-store" }),
       ]);
 
-      const rJson = (await rRes.json()) as MonthlyRentsApiOk | ApiError;
-      const pJson = (await pRes.json()) as PaymentsApiOk | ApiError;
+      const iJson = (await iRes.json()) as InstallmentsApi | ApiError;
+      const pJson = (await pRes.json()) as PaymentsApi | ApiError;
 
-      if (!rRes.ok || !("ok" in rJson) || rJson.ok !== true) {
-        const err = (rJson as ApiError).error || "Error cargando alquiler mensual";
+      if (!iRes.ok || !("ok" in iJson) || iJson.ok !== true) {
+        const err = (iJson as ApiError).error || "Error cargando alquiler mensual";
         throw new Error(err);
       }
-
-      setRents(Array.isArray(rJson.rents) ? rJson.rents : []);
 
       if (!pRes.ok || !("ok" in pJson) || pJson.ok !== true) {
         setPayments([]);
       } else {
-        setPayments(Array.isArray(pJson.payments) ? pJson.payments : []);
+        setPayments(pJson.payments ?? []);
       }
+
+      setInstallments(iJson.installments ?? []);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error inesperado";
-      show(`Alquiler mensual: ${msg}`);
+      show(msg);
     } finally {
       setLoading(false);
     }
@@ -126,14 +103,13 @@ export default function InstallmentsPage() {
     const t = window.setTimeout(() => el.classList.remove("animate-pulse"), 1200);
 
     return () => window.clearTimeout(t);
-  }, [focusId, rents]);
+  }, [focusId, installments]);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
 
-    return rents.filter((it) => {
+    return installments.filter((it) => {
       if (status !== "ALL" && it.status !== status) return false;
-
       if (periodFrom && it.period < periodFrom) return false;
       if (periodTo && it.period > periodTo) return false;
 
@@ -147,24 +123,24 @@ export default function InstallmentsPage() {
 
       return hay;
     });
-  }, [rents, q, status, periodFrom, periodTo]);
+  }, [installments, q, status, periodFrom, periodTo]);
 
   const stats = useMemo(() => {
-    const total = rents.length;
-    const paid = rents.filter((x) => x.status === "PAID").length;
-    const pending = rents.filter((x) => x.status === "PENDING").length;
-    const overdue = rents.filter((x) => x.status === "OVERDUE").length;
+    const total = installments.length;
+    const paid = installments.filter((x) => x.status === "PAID").length;
+    const pending = installments.filter((x) => x.status === "PENDING").length;
+    const overdue = installments.filter((x) => x.status === "OVERDUE").length;
 
-    const pendingAmount = rents
-      .filter((x) => x.status !== "PAID" && x.status !== "CANCELED")
-      .reduce((acc, x) => acc + x.amount, 0);
+    const pendingAmount = installments
+      .filter((x) => x.status !== "PAID")
+      .reduce((acc, x) => acc + (x.amount - (x.paidAmount || 0)), 0);
 
     return { total, paid, pending, overdue, pendingAmount };
-  }, [rents]);
+  }, [installments]);
 
-  function openPayModal(it: MonthlyRentDTO): void {
+  function openPayModal(it: InstallmentDTO): void {
     setPayTarget(it);
-    setPayAmount(String(it.amount));
+    setPayAmount(String(it.amount - (it.paidAmount || 0)));
     setPayMethod("CASH");
     setPayRef("");
     setPayNotes("");
@@ -182,14 +158,12 @@ export default function InstallmentsPage() {
 
     const amountNum = Number(payAmount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      show("Pago: Importe inválido.");
+      show("Importe inválido.");
       return;
     }
 
     setPaySubmitting(true);
     try {
-      // ⚠️ Conservamos tu API actual de pagos (usa installmentId).
-      // Luego lo alineamos para que sea monthlyRentId.
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -197,8 +171,8 @@ export default function InstallmentsPage() {
           installmentId: payTarget._id,
           amount: amountNum,
           method: payMethod,
-          reference: payRef.trim() || undefined,
-          notes: payNotes.trim() || undefined,
+          reference: payRef.trim() ? payRef.trim() : undefined,
+          notes: payNotes.trim() ? payNotes.trim() : undefined,
         }),
       });
 
@@ -214,7 +188,7 @@ export default function InstallmentsPage() {
       await loadAll();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error inesperado";
-      show(`Pago: ${msg}`);
+      show(msg);
     } finally {
       setPaySubmitting(false);
     }
@@ -223,28 +197,31 @@ export default function InstallmentsPage() {
   return (
     <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
       <div className="mx-auto max-w-6xl">
-        {/* Header (igual a Garantes) */}
+        {/* Header (como tu ejemplo) */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Alquiler mensual</h1>
             <p className="text-sm opacity-70">Listado y gestión del alquiler mensual</p>
           </div>
 
+          {/* Acciones arriba derecha, pero visualmente son las “circulares” como en todas las páginas */}
           <div className="flex items-center gap-2">
             {/* Volver */}
-            <Link
-              href="/"
+            <button
+              type="button"
+              onClick={() => router.back()}
               title="Volver"
               className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg"
+              aria-label="Volver"
             >
               ←
-            </Link>
+            </button>
 
-            {/* + verde (va a Pagos) */}
+            {/* Nuevo (+ verde) */}
             <Link
-              href="/payments"
-              title="Ir a Pagos"
-              aria-label="Ir a Pagos"
+              href="/contracts"
+              title="Nuevo contrato (genera alquiler mensual)"
+              aria-label="Nuevo contrato"
               className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
               style={{ color: "var(--benetton-green)" }}
             >
@@ -254,7 +231,7 @@ export default function InstallmentsPage() {
         </div>
 
         {/* Stats */}
-        <div className="mt-6 grid grid-cols-4 gap-4">
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="text-xs text-white/50">TOTAL</div>
             <div className="mt-1 text-2xl font-semibold">{stats.total}</div>
@@ -284,7 +261,7 @@ export default function InstallmentsPage() {
             <div className="text-sm font-semibold">Filtros</div>
           </div>
 
-          <div className="grid grid-cols-5 gap-4 px-5 py-4">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 px-5 py-4">
             <div>
               <div className="mb-2 text-xs text-white/50">BUSCAR</div>
               <input
@@ -382,7 +359,7 @@ export default function InstallmentsPage() {
                   ) : filtered.length === 0 ? (
                     <tr>
                       <td className="px-4 py-6 text-white/60" colSpan={7}>
-                        No hay alquileres.
+                        No hay alquiler mensual.
                       </td>
                     </tr>
                   ) : (
@@ -397,13 +374,7 @@ export default function InstallmentsPage() {
                           : "border-sky-500/30 text-sky-200 bg-sky-500/10";
 
                       const statusLabel =
-                        row.status === "PAID"
-                          ? "PAGADA"
-                          : row.status === "OVERDUE"
-                          ? "VENCIDA"
-                          : row.status === "CANCELED"
-                          ? "CANCELADA"
-                          : "PENDIENTE";
+                        row.status === "PAID" ? "PAGADA" : row.status === "OVERDUE" ? "VENCIDA" : "PENDIENTE";
 
                       const lastPayment = payments
                         .filter((p) => p.installmentId === row._id)
@@ -453,13 +424,6 @@ export default function InstallmentsPage() {
                               >
                                 Pagada
                               </button>
-                            ) : row.status === "CANCELED" ? (
-                              <button
-                                disabled
-                                className="cursor-not-allowed rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/40"
-                              >
-                                Cancelada
-                              </button>
                             ) : (
                               <button
                                 onClick={() => openPayModal(row)}
@@ -478,7 +442,7 @@ export default function InstallmentsPage() {
             </div>
 
             <div className="mt-3 text-xs text-white/40">
-              Tip: desde Pagos podés entrar directo al alquiler con <span className="font-mono">?focus=...</span>
+              Tip: desde Pagos podés entrar directo con <span className="font-mono">?focus=...</span>
             </div>
           </div>
         </div>
@@ -491,11 +455,11 @@ export default function InstallmentsPage() {
             <div className="border-b border-white/10 px-6 py-5">
               <div className="text-xl font-semibold">Registrar pago</div>
               <div className="mt-1 text-sm text-white/60">
-                Alquiler {payTarget.period} — {formatMoneyARS(payTarget.amount)}
+                {payTarget.period} — {formatMoneyARS(payTarget.amount)}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 px-6 py-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-6 py-5">
               <div>
                 <div className="mb-2 text-xs text-white/50">IMPORTE</div>
                 <input
@@ -519,7 +483,7 @@ export default function InstallmentsPage() {
                 </select>
               </div>
 
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <div className="mb-2 text-xs text-white/50">REFERENCIA (OPCIONAL)</div>
                 <input
                   value={payRef}
@@ -529,7 +493,7 @@ export default function InstallmentsPage() {
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <div className="mb-2 text-xs text-white/50">NOTAS (OPCIONAL)</div>
                 <textarea
                   value={payNotes}
@@ -564,4 +528,5 @@ export default function InstallmentsPage() {
     </main>
   );
 }
+
 

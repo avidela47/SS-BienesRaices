@@ -2,7 +2,8 @@ import { Types } from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { dbConnect } from "@/lib/mongoose";
 
-import Contract from "@/models/Contract";
+import Contract, { type ContractStatus } from "@/models/Contract";
+import Property from "@/models/Property";
 import Installment from "@/models/Installment";
 import { Payment } from "@/models/Payment";
 
@@ -11,6 +12,60 @@ const TENANT_ID = "default";
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "unknown";
+}
+
+function addMonthsSafe(date: Date, months: number): Date {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  if (d.getDate() < day) d.setDate(0);
+  return d;
+}
+
+async function syncContractStates(): Promise<void> {
+  const now = new Date();
+  const nowPlus3 = addMonthsSafe(now, 3);
+
+  await Contract.updateMany(
+    {
+      tenantId: TENANT_ID,
+      status: "ACTIVE",
+      endDate: { $gt: now, $lte: nowPlus3 },
+    },
+    { $set: { status: "EXPIRING" satisfies ContractStatus } }
+  );
+
+  const ended = await Contract.find(
+    {
+      tenantId: TENANT_ID,
+      status: { $in: ["ACTIVE", "EXPIRING"] },
+      endDate: { $lte: now },
+    },
+    { _id: 1, propertyId: 1 }
+  ).lean<Array<{ _id: Types.ObjectId; propertyId: Types.ObjectId }>>();
+
+  if (ended.length > 0) {
+    await Contract.updateMany(
+      { tenantId: TENANT_ID, _id: { $in: ended.map((x) => x._id) } },
+      { $set: { status: "ENDED" satisfies ContractStatus } }
+    );
+
+    for (const c of ended) {
+      const stillActive = await Contract.exists({
+        tenantId: TENANT_ID,
+        propertyId: c.propertyId,
+        status: { $in: ["ACTIVE", "EXPIRING"] },
+      });
+
+      if (!stillActive) {
+        await Property.findByIdAndUpdate(c.propertyId, {
+          status: "AVAILABLE",
+          inquilinoId: null,
+          availableFrom: null,
+        });
+      }
+    }
+  }
 }
 
 type Totals = {
@@ -24,7 +79,6 @@ type Totals = {
   pendingInstallments: number;
 };
 
-// GET: Detalle de contrato
 export async function GET(
   _req: NextRequest,
   ctx: { params: { id: string } } | { params: Promise<{ id: string }> }
@@ -32,15 +86,12 @@ export async function GET(
   try {
     await dbConnect();
 
-    // Soportar params como Promise (Next.js 14+)
-  let id: string;
+    // ✅ Sync estados antes de responder
+    await syncContractStates();
+
+    let id: string;
     function isPromise<T>(v: unknown): v is Promise<T> {
-      return (
-        typeof v === "object" &&
-        v !== null &&
-        "then" in v &&
-        typeof (v as { then: unknown }).then === "function"
-      );
+      return typeof v === "object" && v !== null && "then" in v && typeof (v as { then: unknown }).then === "function";
     }
     if (isPromise<{ id: string }>(ctx.params)) {
       const resolved = await ctx.params;
@@ -49,7 +100,6 @@ export async function GET(
       id = (ctx.params as { id: string }).id;
     }
 
-    // Buscar por _id o por code (ambos únicos por tenant)
     let contract = null;
     if (/^[0-9a-fA-F]{24}$/.test(id)) {
       contract = await Contract.findOne({ tenantId: TENANT_ID, _id: id })
@@ -67,10 +117,7 @@ export async function GET(
     }
 
     if (!contract) {
-      return NextResponse.json(
-        { ok: false, error: "Contrato no encontrado." },
-        { status: 404 }
-      );
+      return NextResponse.json({ ok: false, error: "Contrato no encontrado." }, { status: 404 });
     }
 
     const installments = await Installment.find({
@@ -87,10 +134,7 @@ export async function GET(
       .sort({ date: -1 })
       .lean();
 
-    const totalDue = installments.reduce(
-      (acc: number, it: { amount?: number }) => acc + (Number(it.amount) || 0),
-      0
-    );
+    const totalDue = installments.reduce((acc: number, it: { amount?: number }) => acc + (Number(it.amount) || 0), 0);
 
     const totalPaidOk = payments.reduce((acc: number, p: { status?: string; amount?: number }) => {
       if (p.status === "OK") return acc + (Number(p.amount) || 0);
@@ -102,10 +146,7 @@ export async function GET(
       return acc;
     }, 0);
 
-    const paidInstallments = installments.reduce(
-      (acc: number, it: { status?: string }) => acc + (it.status === "PAID" ? 1 : 0),
-      0
-    );
+    const paidInstallments = installments.reduce((acc: number, it: { status?: string }) => acc + (it.status === "PAID" ? 1 : 0), 0);
     const pendingInstallments = installments.length - paidInstallments;
 
     const totals: Totals = {
@@ -140,7 +181,7 @@ export async function GET(
   }
 }
 
-// PUT: Editar contrato
+// PUT y DELETE los dejo como estaban (sin tocar lógica ahora)
 export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
   try {
     await dbConnect();
@@ -169,11 +210,9 @@ export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
       },
       { new: true }
     );
+
     if (!contract) {
-      return NextResponse.json(
-        { ok: false, message: "Contrato no encontrado" },
-        { status: 404 }
-      );
+      return NextResponse.json({ ok: false, message: "Contrato no encontrado" }, { status: 404 });
     }
     return NextResponse.json({ ok: true, contract });
   } catch (err: unknown) {
@@ -184,20 +223,13 @@ export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
   }
 }
 
-// DELETE: Eliminar contrato
 export async function DELETE(_req: NextRequest, ctx: { params: { id: string } }) {
-  console.log('DELETE contrato: id recibido =', ctx.params.id);
   try {
     await dbConnect();
-    // Soportar params como Promise (Next.js 14+)
+
     let id: string;
     function isPromise<T>(v: unknown): v is Promise<T> {
-      return (
-        typeof v === "object" &&
-        v !== null &&
-        "then" in v &&
-        typeof (v as { then: unknown }).then === "function"
-      );
+      return typeof v === "object" && v !== null && "then" in v && typeof (v as { then: unknown }).then === "function";
     }
     if (isPromise<{ id: string }>(ctx.params)) {
       const resolved = await ctx.params;
@@ -205,19 +237,14 @@ export async function DELETE(_req: NextRequest, ctx: { params: { id: string } })
     } else {
       id = (ctx.params as { id: string }).id;
     }
+
     const objectId = Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id;
-    const contract = await Contract.findOneAndDelete({
-      _id: objectId,
-    });
-    console.log('DELETE contrato: id recibido =', id);
-    console.log('Resultado búsqueda contract:', contract);
-    console.log('Resultado búsqueda contract:', contract);
+
+    const contract = await Contract.findOneAndDelete({ _id: objectId });
     if (!contract) {
-      return NextResponse.json(
-        { ok: false, message: "Contrato no encontrado" },
-        { status: 404 }
-      );
+      return NextResponse.json({ ok: false, message: "Contrato no encontrado" }, { status: 404 });
     }
+
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     return NextResponse.json(
