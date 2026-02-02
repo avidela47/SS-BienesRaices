@@ -1,23 +1,45 @@
 "use client";
+
 import type { PropertyDTO } from "@/lib/types";
 import Image from "next/image";
 
-function statusLabel(s: PropertyDTO["status"]) {
-  if (s === "AVAILABLE") return "Disponible";
-  if (s === "RENTED") return "Alquilada";
-  if (s === "MAINTENANCE") return "Mantenimiento";
-  return s;
+type AppPropertyStatus = "AVAILABLE" | "RENTED" | "MAINTENANCE";
+
+function normalizeStatus(v: unknown): AppPropertyStatus {
+  const s = typeof v === "string" ? v : "";
+  if (s === "AVAILABLE" || s === "RENTED" || s === "MAINTENANCE") return s;
+  if (s === "OCCUPIED") return "RENTED";
+  if (s === "INACTIVE") return "MAINTENANCE";
+  return "AVAILABLE";
 }
 
-export default function PropertyModal({ property, onClose }: { property: PropertyDTO; onClose: () => void }) {
+function statusLabel(s: AppPropertyStatus) {
+  if (s === "AVAILABLE") return "Disponible";
+  if (s === "RENTED") return "Alquilada";
+  return "Mantenimiento";
+}
+
+export default function PropertyModal({
+  property,
+  onClose,
+}: {
+  property: PropertyDTO;
+  onClose: () => void;
+}) {
   if (!property) return null;
 
-  const owner = typeof property.ownerId === "object" ? property.ownerId.fullName : property.ownerId;
+  const owner =
+    typeof property.ownerId === "object"
+      ? property.ownerId.fullName
+      : property.ownerId;
+
   const tenant = property.inquilinoId
     ? typeof property.inquilinoId === "object"
       ? property.inquilinoId.fullName
       : property.inquilinoId
     : null;
+
+  const st = normalizeStatus((property as unknown as { status?: unknown })?.status);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
@@ -32,7 +54,10 @@ export default function PropertyModal({ property, onClose }: { property: Propert
         </button>
 
         <h2 className="text-2xl font-bold mb-4 text-white flex items-center gap-2">
-          {property.code} <span className="text-base font-normal text-neutral-400">{property.tipo || ""}</span>
+          {property.code}{" "}
+          <span className="text-base font-normal text-neutral-400">
+            {property.tipo || ""}
+          </span>
         </h2>
 
         <div className="mb-4">
@@ -57,13 +82,23 @@ export default function PropertyModal({ property, onClose }: { property: Propert
           </div>
         ) : null}
 
-        {(property.foto || property.mapa) ? (
+        {property.foto || property.mapa ? (
           <div className="mb-4 flex flex-col md:flex-row gap-6 items-center justify-center">
             {property.foto ? (
               <div className="flex-1 flex flex-col items-center">
                 <div className="text-white font-semibold mb-2">Foto:</div>
-                <div className="bg-neutral-800 rounded-lg border border-white/10 p-2 flex items-center justify-center" style={{ width: 340, height: 220 }}>
-                  <Image src={property.foto} alt="Foto propiedad" width={320} height={200} className="rounded object-cover" style={{ width: 320, height: 200 }} />
+                <div
+                  className="bg-neutral-800 rounded-lg border border-white/10 p-2 flex items-center justify-center"
+                  style={{ width: 340, height: 220 }}
+                >
+                  <Image
+                    src={property.foto}
+                    alt="Foto propiedad"
+                    width={320}
+                    height={200}
+                    className="rounded object-cover"
+                    style={{ width: 320, height: 200 }}
+                  />
                 </div>
               </div>
             ) : null}
@@ -71,7 +106,10 @@ export default function PropertyModal({ property, onClose }: { property: Propert
             {property.mapa ? (
               <div className="flex-1 flex flex-col items-center">
                 <div className="text-white font-semibold mb-2">Mapa:</div>
-                <div className="bg-neutral-800 rounded-lg border border-white/10 p-2 flex items-center justify-center" style={{ width: 340, height: 220 }}>
+                <div
+                  className="bg-neutral-800 rounded-lg border border-white/10 p-2 flex items-center justify-center"
+                  style={{ width: 340, height: 220 }}
+                >
                   <iframe
                     src={property.mapa}
                     title="Mapa propiedad"
@@ -90,12 +128,19 @@ export default function PropertyModal({ property, onClose }: { property: Propert
 
         <div className="flex flex-col gap-1 text-xs text-neutral-400 mt-4">
           <div>
-            <b>Estado:</b> {statusLabel(property.status)}
+            <b>Estado:</b> {statusLabel(st)}
           </div>
-          <div><b>Creado:</b> {property.createdAt ? new Date(property.createdAt).toLocaleString() : "-"}</div>
-          <div><b>Actualizado:</b> {property.updatedAt ? new Date(property.updatedAt).toLocaleString() : "-"}</div>
+          <div>
+            <b>Creado:</b>{" "}
+            {property.createdAt ? new Date(property.createdAt).toLocaleString() : "-"}
+          </div>
+          <div>
+            <b>Actualizado:</b>{" "}
+            {property.updatedAt ? new Date(property.updatedAt).toLocaleString() : "-"}
+          </div>
         </div>
       </div>
     </div>
   );
 }
+

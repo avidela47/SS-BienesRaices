@@ -16,7 +16,7 @@ type BillingAdjustmentInput = {
   percentage: number;
 };
 
-type ContractCreateDTO_New = {
+type ContractCreateDTO = {
   propertyId: string;
   ownerId: string;
   tenantPersonId: string;
@@ -31,34 +31,12 @@ type ContractCreateDTO_New = {
   actualizacionCadaMeses?: number;
   ajustes?: BillingAdjustmentInput[];
 
-  code?: string;
-};
-
-// Formato viejo que venías usando
-type ContractCreateDTO_Legacy = {
-  propertyId: string;
-  ownerId: string;
-  tenantPersonId: string;
-
-  startDate: string;
-  endDate?: string;
-
+  // legacy (por compat)
   duracion?: number;
   valorCuota?: number;
   diaVencimiento?: number;
-
   actualizacionCada?: number;
   porcentajeActualizacion?: number;
-
-  billing?: {
-    dueDay?: number;
-    baseRent?: number;
-    currency?: string;
-    lateFeePolicy?: { type?: "NONE" | "FIXED" | "PERCENT"; value?: number };
-    notes?: string;
-    actualizacionCada?: number;
-    porcentajeActualizacion?: number;
-  };
 
   code?: string;
 };
@@ -74,7 +52,12 @@ function pad3(n: number): string {
 
 async function nextContractCode(): Promise<string> {
   const key = "contract:CID";
-  const doc = await Counter.findOneAndUpdate({ tenantId: TENANT_ID, key }, { $inc: { seq: 1 } }, { new: true, upsert: true }).lean<{ seq?: number }>();
+  const doc = await Counter.findOneAndUpdate(
+    { tenantId: TENANT_ID, key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  ).lean<{ seq?: number }>();
+
   const seq = doc?.seq ?? 1;
   return `CID-${pad3(seq)}`;
 }
@@ -115,72 +98,17 @@ function requiredAdjustmentsCount(duracionMeses: number, cadaMeses: number): num
   return Math.floor((duracionMeses - 1) / cadaMeses);
 }
 
-function normalizeCreatePayload(input: Partial<ContractCreateDTO_New & ContractCreateDTO_Legacy>) {
-  const propertyId = input.propertyId ? String(input.propertyId) : "";
-  const ownerId = input.ownerId ? String(input.ownerId) : "";
-  const tenantPersonId = input.tenantPersonId ? String(input.tenantPersonId) : "";
-  const startDateRaw = input.startDate ? String(input.startDate) : "";
+function toNumberSafe(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(String(v ?? "").trim());
+  return Number.isFinite(n) ? n : NaN;
+}
 
-  const currency =
-    (typeof (input as ContractCreateDTO_New).currency === "string" && (input as ContractCreateDTO_New).currency.trim()) ||
-    (typeof input.billing?.currency === "string" && input.billing.currency.trim()) ||
-    "ARS";
-
-  // Duración
-  const duracionMeses =
-    Number((input as ContractCreateDTO_New).duracionMeses) ||
-    Number((input as ContractCreateDTO_Legacy).duracion) ||
-    0;
-
-  // Monto base
-  const montoBase =
-    Number((input as ContractCreateDTO_New).montoBase) ||
-    Number((input as ContractCreateDTO_Legacy).valorCuota) ||
-    Number(input.billing?.baseRent) ||
-    0;
-
-  // Due day
-  const dueDay =
-    Number((input as ContractCreateDTO_New).dueDay) ||
-    Number((input as ContractCreateDTO_Legacy).diaVencimiento) ||
-    Number(input.billing?.dueDay) ||
-    0;
-
-  // Actualización cada
-  const actualizacionCadaMeses =
-    Number((input as ContractCreateDTO_New).actualizacionCadaMeses ?? 0) ||
-    Number((input as ContractCreateDTO_Legacy).actualizacionCada ?? input.billing?.actualizacionCada ?? 0) ||
-    0;
-
-  // Porcentaje base (si viene legacy)
-  const pctLegacy =
-    Number((input as ContractCreateDTO_Legacy).porcentajeActualizacion ?? input.billing?.porcentajeActualizacion ?? 0) || 0;
-
-  // Ajustes: si viene nuevo, lo uso; si no, lo construyo repitiendo pctLegacy
-  let ajustes: BillingAdjustmentInput[] = Array.isArray((input as ContractCreateDTO_New).ajustes)
-    ? (input as ContractCreateDTO_New).ajustes!.map((a) => ({ n: Number(a.n), percentage: Number(a.percentage) }))
-    : [];
-
+// Si no mandan ajustes pero mandan porcentajeActualizacion, generamos la lista por compat
+function buildAjustesCompat(duracionMeses: number, actualizacionCadaMeses: number, porcentajeActualizacion: number): BillingAdjustmentInput[] {
   const expected = requiredAdjustmentsCount(duracionMeses, actualizacionCadaMeses);
-
-  if (expected > 0 && ajustes.length === 0 && Number.isFinite(pctLegacy)) {
-    ajustes = Array.from({ length: expected }, (_v, i) => ({ n: i + 1, percentage: pctLegacy }));
-  }
-
-  return {
-    propertyId,
-    ownerId,
-    tenantPersonId,
-    startDateRaw,
-    duracionMeses,
-    montoBase,
-    dueDay,
-    currency,
-    actualizacionCadaMeses,
-    pctLegacy,
-    ajustes,
-    code: input.code ? String(input.code).trim() : "",
-  };
+  if (expected <= 0) return [];
+  const pct = Number.isFinite(porcentajeActualizacion) ? porcentajeActualizacion : 0;
+  return Array.from({ length: expected }, (_v, i) => ({ n: i + 1, percentage: pct }));
 }
 
 export async function GET() {
@@ -196,7 +124,10 @@ export async function GET() {
 
     return NextResponse.json({ ok: true, contracts });
   } catch (err: unknown) {
-    return NextResponse.json({ ok: false, message: "Failed to fetch contracts", error: getErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, message: "Failed to fetch contracts", error: getErrorMessage(err) },
+      { status: 500 }
+    );
   }
 }
 
@@ -204,123 +135,140 @@ export async function POST(req: Request) {
   try {
     await dbConnect();
 
-    const raw = (await req.json()) as Partial<ContractCreateDTO_New & ContractCreateDTO_Legacy>;
-    const n = normalizeCreatePayload(raw);
+    const raw = (await req.json()) as Partial<ContractCreateDTO>;
 
-    // Validaciones mínimas
-    if (!n.propertyId || !n.ownerId || !n.tenantPersonId || !n.startDateRaw) {
+    // ✅ required base fields
+    if (!raw.propertyId || !raw.ownerId || !raw.tenantPersonId || !raw.startDate) {
       return NextResponse.json(
         { ok: false, message: "Missing required fields: propertyId, ownerId, tenantPersonId, startDate" },
         { status: 400 }
       );
     }
 
-    if (!n.duracionMeses || Number.isNaN(n.duracionMeses) || n.duracionMeses < 1) {
+    // ✅ compat: aceptamos nuevos y viejos nombres
+    const duracionMeses = toNumberSafe(raw.duracionMeses ?? raw.duracion);
+    const montoBase = toNumberSafe(raw.montoBase ?? raw.valorCuota ?? (raw as unknown as { billing?: { baseRent?: unknown } })?.billing?.baseRent);
+    const dueDay = toNumberSafe(raw.dueDay ?? raw.diaVencimiento ?? (raw as unknown as { billing?: { dueDay?: unknown } })?.billing?.dueDay);
+
+    if (!duracionMeses || Number.isNaN(duracionMeses) || duracionMeses < 1) {
       return NextResponse.json({ ok: false, message: "duracionMeses must be >= 1" }, { status: 400 });
     }
-
-    if (Number.isNaN(n.montoBase) || n.montoBase < 0) {
+    if (Number.isNaN(montoBase) || montoBase < 0) {
       return NextResponse.json({ ok: false, message: "montoBase invalid" }, { status: 400 });
     }
-
-    if (Number.isNaN(n.dueDay) || n.dueDay < 1 || n.dueDay > 28) {
+    if (Number.isNaN(dueDay) || dueDay < 1 || dueDay > 28) {
       return NextResponse.json({ ok: false, message: "dueDay must be 1..28" }, { status: 400 });
     }
 
-    const startDate = new Date(String(n.startDateRaw));
+    const startDate = new Date(String(raw.startDate));
     if (Number.isNaN(startDate.getTime())) {
       return NextResponse.json({ ok: false, message: "startDate invalid" }, { status: 400 });
     }
 
-    if (Number.isNaN(n.actualizacionCadaMeses) || n.actualizacionCadaMeses < 0) {
+    const actualizacionCadaMeses = toNumberSafe(raw.actualizacionCadaMeses ?? raw.actualizacionCada ?? 0);
+    if (Number.isNaN(actualizacionCadaMeses) || actualizacionCadaMeses < 0) {
       return NextResponse.json({ ok: false, message: "actualizacionCadaMeses invalid" }, { status: 400 });
     }
 
-    // Ajustes manuales
-    for (const a of n.ajustes) {
-      const nn = Number(a.n);
-      const p = Number(a.percentage);
-      if (Number.isNaN(nn) || nn < 1 || Number.isNaN(p)) {
-        return NextResponse.json({ ok: false, message: "ajustes invalid format (n>=1, percentage number)" }, { status: 400 });
+    const currency = (raw.currency ? String(raw.currency).trim() : "ARS") || "ARS";
+
+    // Ajustes manuales (nuevo) o compat (viejo)
+    let ajustes: BillingAdjustmentInput[] = Array.isArray(raw.ajustes) ? raw.ajustes : [];
+    if (!ajustes.length) {
+      const pctCompat = toNumberSafe(raw.porcentajeActualizacion ?? 0);
+      if (actualizacionCadaMeses > 0 && Number.isFinite(pctCompat) && pctCompat > 0) {
+        ajustes = buildAjustesCompat(duracionMeses, actualizacionCadaMeses, pctCompat);
       }
     }
 
-    const expectedAdjustments = requiredAdjustmentsCount(n.duracionMeses, n.actualizacionCadaMeses);
-    if (expectedAdjustments > 0 && n.ajustes.length !== expectedAdjustments) {
+    // validar formato ajustes
+    for (const a of ajustes) {
+      const n = toNumberSafe(a.n);
+      const p = toNumberSafe(a.percentage);
+      if (Number.isNaN(n) || n < 1 || Number.isNaN(p)) {
+        return NextResponse.json(
+          { ok: false, message: "ajustes invalid format (n>=1, percentage number)" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Cantidad de eventos esperados según duración y frecuencia
+    const expectedAdjustments = requiredAdjustmentsCount(duracionMeses, actualizacionCadaMeses);
+    if (expectedAdjustments > 0 && ajustes.length !== expectedAdjustments) {
       return NextResponse.json(
         {
           ok: false,
-          message: `Debe cargar ${expectedAdjustments} ajustes (1 por cada actualización). Recibidos: ${n.ajustes.length}.`,
+          message: `Debe cargar ${expectedAdjustments} ajustes (1 por cada actualización). Recibidos: ${ajustes.length}.`,
         },
         { status: 400 }
       );
     }
 
     // Validación de entidades
-    const property = await Property.findById(n.propertyId).lean<{ status?: string } | null>();
+    const property = await Property.findById(raw.propertyId).lean<{ status?: string } | null>();
     if (!property) return NextResponse.json({ ok: false, message: "propertyId not found" }, { status: 400 });
 
     if (property.status === "RENTED") {
       return NextResponse.json({ ok: false, message: "Propiedad alquilada" }, { status: 400 });
     }
 
-    const owner = await Person.findById(n.ownerId).lean<{ type?: string } | null>();
+    const owner = await Person.findById(raw.ownerId).lean<{ type?: string } | null>();
     if (!owner) return NextResponse.json({ ok: false, message: "ownerId not found" }, { status: 400 });
     if (owner.type !== "OWNER") return NextResponse.json({ ok: false, message: "ownerId must be OWNER" }, { status: 400 });
 
-    const tenant = await Person.findById(n.tenantPersonId).lean<{ type?: string } | null>();
+    const tenant = await Person.findById(raw.tenantPersonId).lean<{ type?: string } | null>();
     if (!tenant) return NextResponse.json({ ok: false, message: "tenantPersonId not found" }, { status: 400 });
     if (tenant.type !== "TENANT") return NextResponse.json({ ok: false, message: "tenantPersonId must be TENANT" }, { status: 400 });
 
     // Código
-    const code = n.code ? n.code : await nextContractCode();
+    const code = raw.code && String(raw.code).trim() ? String(raw.code).trim() : await nextContractCode();
 
-    // endDate derivado (duración manda)
-    const endDate = addMonthsSafe(startDate, n.duracionMeses);
+    // endDate derivado (duracion manda)
+    const endDate = addMonthsSafe(startDate, duracionMeses);
 
-    const montoBaseRounded = Math.round(n.montoBase);
+    const montoBaseInt = Math.round(montoBase);
+    const dueDayInt = Math.round(dueDay);
 
-    // ✅ IMPORTANTE: guardamos con los CAMPOS DEL SCHEMA VIEJO
+    // ✅ Crear contrato (doble compat: root + billing)
     const contract = await Contract.create({
       tenantId: TENANT_ID,
       code,
-      propertyId: new Types.ObjectId(n.propertyId),
-      ownerId: new Types.ObjectId(n.ownerId),
-      tenantPersonId: new Types.ObjectId(n.tenantPersonId),
-
+      propertyId: new Types.ObjectId(raw.propertyId),
+      ownerId: new Types.ObjectId(raw.ownerId),
+      tenantPersonId: new Types.ObjectId(raw.tenantPersonId),
       startDate,
       endDate,
 
-      // legacy fields
-      duracion: n.duracionMeses,
-      valorCuota: montoBaseRounded,
-      diaVencimiento: n.dueDay,
+      // ✅ nuevos
+      duracionMeses,
+      montoBase: montoBaseInt,
 
-      actualizacionCada: n.actualizacionCadaMeses,
-      porcentajeActualizacion: n.pctLegacy,
+      // ✅ legacy por si tu schema viejo lo usa
+      duracion: duracionMeses,
+      valorCuota: montoBaseInt,
+      diaVencimiento: dueDayInt,
+      actualizacionCada: actualizacionCadaMeses,
 
       status: "ACTIVE",
-
       billing: {
-        dueDay: n.dueDay,
-        baseRent: montoBaseRounded,
-        currency: n.currency,
+        // ✅ compat con muchos schemas
+        dueDay: dueDayInt,
+        baseRent: montoBaseInt,
+
+        currency,
+        actualizacionCadaMeses,
+        ajustes,
         lateFeePolicy: { type: "NONE", value: 0 },
         notes: "",
-        actualizacionCada: n.actualizacionCadaMeses,
-        porcentajeActualizacion: n.pctLegacy,
-        // si tu schema ya incluye ajustes/actualizacionCadaMeses, no molesta; si no, mongoose los ignora (strict)
-        actualizacionCadaMeses: n.actualizacionCadaMeses,
-        ajustes: n.ajustes,
       },
-
       documents: [],
     });
 
     // Bloquear propiedad + asignar inquilino actual
-    await Property.findByIdAndUpdate(n.propertyId, {
+    await Property.findByIdAndUpdate(raw.propertyId, {
       status: "RENTED",
-      inquilinoId: n.tenantPersonId,
+      inquilinoId: raw.tenantPersonId,
     });
 
     // ✅ Generar Installments (N meses)
@@ -337,16 +285,18 @@ export async function POST(req: Request) {
       lastReminderAt: null;
     }> = [];
 
-    let currentAmount = montoBaseRounded;
+    let currentAmount = montoBaseInt;
     let adjIndex = 0;
 
-    for (let month = 1; month <= n.duracionMeses; month += 1) {
-      if (n.actualizacionCadaMeses > 0 && month !== 1) {
-        const isAdjustmentMonth = (month - 1) % n.actualizacionCadaMeses === 0;
+    for (let month = 1; month <= duracionMeses; month += 1) {
+      if (actualizacionCadaMeses > 0 && month !== 1) {
+        const isAdjustmentMonth = (month - 1) % actualizacionCadaMeses === 0;
         if (isAdjustmentMonth) {
-          const adj = n.ajustes[adjIndex];
-          const pct = adj ? Number(adj.percentage) : 0;
-          currentAmount = Math.round(currentAmount * (1 + pct / 100));
+          const adj = ajustes[adjIndex];
+          const pct = adj ? toNumberSafe(adj.percentage) : 0;
+          const pctSafe = Number.isFinite(pct) ? pct : 0;
+
+          currentAmount = Math.round(currentAmount * (1 + pctSafe / 100));
           adjIndex += 1;
         }
       }
@@ -354,7 +304,7 @@ export async function POST(req: Request) {
       const monthOffset = month - 1;
       const monthDate = addMonthsSafe(startDate, monthOffset);
       const period = formatPeriodYYYYMM(monthDate);
-      const dueDateComputed = buildDueDateForMonth(startDate, monthOffset, n.dueDay);
+      const dueDateComputed = buildDueDateForMonth(startDate, monthOffset, dueDayInt);
 
       installmentsToInsert.push({
         tenantId: TENANT_ID,
@@ -379,6 +329,9 @@ export async function POST(req: Request) {
       installmentsCreated: installmentsToInsert.length,
     });
   } catch (err: unknown) {
-    return NextResponse.json({ ok: false, message: "Failed to create contract", error: getErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, message: "Failed to create contract", error: getErrorMessage(err) },
+      { status: 500 }
+    );
   }
 }

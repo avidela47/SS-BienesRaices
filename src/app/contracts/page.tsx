@@ -6,18 +6,6 @@ import { useToast } from "@/app/components/ToastProvider";
 
 type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
 
-type PropertyDTO = {
-  _id: string;
-  code: string;
-  addressLine: string;
-  unit?: string;
-  city?: string;
-  province?: string;
-  status?: string;
-  ownerId?: PersonDTO | string;
-  inquilinoId?: PersonDTO | string;
-};
-
 type PersonDTO = {
   _id: string;
   code?: string;
@@ -27,11 +15,19 @@ type PersonDTO = {
   phone?: string;
 };
 
-type ContractDTO = {
-  duracion?: number;
-  valorCuota?: number;
-  diaVencimiento?: number;
+type PropertyDTO = {
+  _id: string;
+  code: string;
+  addressLine: string;
+  unit?: string;
+  city?: string;
+  province?: string;
+  status?: string;
+  ownerId?: PersonDTO | string;
+  inquilinoId?: PersonDTO | string | null;
+};
 
+type ContractDTO = {
   _id: string;
   tenantId: string;
   code: string;
@@ -54,15 +50,6 @@ type ContractDTO = {
     porcentajeActualizacion?: number;
   };
 
-  actualizacionCada?: number;
-  porcentajeActualizacion?: number;
-
-  montoCuota?: number;
-  comision?: number;
-  expensas?: string;
-  otrosGastosImporte?: number;
-  otrosGastosDesc?: string;
-
   createdAt: string;
   updatedAt: string;
 };
@@ -72,6 +59,15 @@ type ContractsListResponse =
   | { ok: false; error?: string; message?: string };
 
 type StatusFilter = "ALL" | ContractStatus;
+
+type InstallmentSim = {
+  periodo: string;
+  vencimiento: string;
+  monto: number;
+  estado: string;
+  pagado: boolean;
+  pago: string;
+};
 
 function formatARS(n: number) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
@@ -111,75 +107,16 @@ function statusBadge(status: ContractStatus) {
   }
 }
 
-type InstallmentSim = {
-  periodo: string;
-  vencimiento: string;
-  monto: number;
-  estado: string;
-  pagado: boolean;
-  pago: string;
-};
-
-function toNum(v: unknown): number {
-  const n = typeof v === "number" ? v : Number(String(v ?? "").trim());
-  return Number.isFinite(n) ? n : NaN;
-}
-
-// Backend: expectedAdjustments = floor((duracionMeses - 1) / actualizacionCadaMeses)
-function expectedAdjustmentsCount(duracionMeses: number, cadaMeses: number): number {
-  if (!Number.isFinite(duracionMeses) || duracionMeses < 1) return 0;
-  if (!Number.isFinite(cadaMeses) || cadaMeses <= 0) return 0;
-  return Math.floor((duracionMeses - 1) / cadaMeses);
-}
-
-// Armamos ajustes repitiendo el % que el usuario carga (por ahora simple, sin lista manual)
-function buildAjustes(duracionMeses: number, actualizacionCadaMeses: number, pct: number) {
-  const count = expectedAdjustmentsCount(duracionMeses, actualizacionCadaMeses);
-  if (count <= 0) return [];
-  const safePct = Number.isFinite(pct) ? pct : 0;
-  return Array.from({ length: count }, (_v, i) => ({ n: i + 1, percentage: safePct }));
-}
-
 export default function ContractsPage() {
-  const [deleteModal, setDeleteModal] = useState<{ open: boolean; contrato: ContractDTO | null }>({ open: false, contrato: null });
-
   const toast = useToast();
-  const [showAltaModal, setShowAltaModal] = useState(false);
-
-  const [nuevoContrato, setNuevoContrato] = useState({
-    duracion: "",
-    titular: "",
-    inquilino: "",
-    valorCuota: "",
-    actualizacionCada: "",
-    porcentajeActualizacion: "",
-    montoCuota: "",
-    comision: "",
-    expensas: "no",
-    otrosGastosImporte: "",
-    otrosGastosDesc: "",
-    propiedadId: "",
-    fechaInicio: "",
-    fechaFin: "",
-    diaVencimiento: "",
-    currency: "",
-    lateFeeType: "",
-    lateFeeValue: "",
-    notes: "",
-    // ✅ FIX ESLINT: no any
-    documents: [] as unknown[],
-  });
 
   const [err, setErr] = useState("");
   const [contracts, setContracts] = useState<ContractDTO[]>([]);
-  const [editContrato, setEditContrato] = useState<ContractDTO | null>(null);
 
-  const [guardando, setGuardando] = useState(false);
-  const [errorAlta, setErrorAlta] = useState("");
-
-  const [titulares, setTitulares] = useState<PersonDTO[]>([]);
-  const [inquilinos, setInquilinos] = useState<PersonDTO[]>([]);
-  const [propiedades, setPropiedades] = useState<PropertyDTO[]>([]);
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; contrato: ContractDTO | null }>({
+    open: false,
+    contrato: null,
+  });
 
   const [cuotasModal, setCuotasModal] = useState<{
     open: boolean;
@@ -193,22 +130,16 @@ export default function ContractsPage() {
 
   function generarCuotasSimuladas(contrato: ContractDTO): (InstallmentSim & { montoConMora: number })[] {
     const cuotas: (InstallmentSim & { montoConMora: number })[] = [];
-    const duracion = Number(contrato.duracion) || 0;
-    const baseRent = contrato.valorCuota || contrato.billing?.baseRent || 0;
-    const actualizacionCada = Number(contrato.actualizacionCada ?? contrato.billing?.actualizacionCada) || 0;
-    const porcentajeActualizacion = Number(contrato.porcentajeActualizacion ?? contrato.billing?.porcentajeActualizacion) || 0;
+    const duracion = 0; // (si querés simular acá, necesitamos duracionMeses real en el DTO de lista)
+    const baseRent = contrato.billing?.baseRent || 0;
     const lateFeeType = contrato.billing?.lateFeePolicy?.type;
     const lateFeeValue = Number(contrato.billing?.lateFeePolicy?.value) || 0;
     const startDate = contrato.startDate ? new Date(contrato.startDate) : null;
     if (!duracion || !startDate) return [];
 
-    let montoActual = baseRent;
+      const montoActual = baseRent;
 
     for (let i = 0; i < duracion; i++) {
-      if (actualizacionCada > 0 && porcentajeActualizacion > 0 && i > 0 && i % actualizacionCada === 0) {
-        montoActual = montoActual + (montoActual * porcentajeActualizacion) / 100;
-      }
-
       const fechaVenc = new Date(startDate);
       fechaVenc.setMonth(fechaVenc.getMonth() + i);
 
@@ -238,11 +169,6 @@ export default function ContractsPage() {
     return cuotas;
   }
 
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("ALL");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-
   async function load() {
     setErr("");
     try {
@@ -251,7 +177,7 @@ export default function ContractsPage() {
 
       if (!data.ok) {
         setContracts([]);
-        const msg = "error" in data && data.error ? data.error : "message" in data && data.message ? data.message : "Error";
+        const msg = ("error" in data && data.error) || ("message" in data && data.message) || "Error";
         setErr(msg);
         return;
       }
@@ -265,29 +191,14 @@ export default function ContractsPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-
-    fetch("/api/people")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data && data.ok && Array.isArray(data.people)) {
-          setTitulares(data.people.filter((p: PersonDTO) => p.type === "OWNER"));
-          setInquilinos(data.people.filter((p: PersonDTO) => p.type === "TENANT"));
-        }
-      });
-
-    fetch("/api/properties")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data && data.ok && Array.isArray(data.properties)) {
-          setPropiedades(data.properties);
-          console.log(
-            "PROPIEDADES:",
-            (data.properties as PropertyDTO[]).map((p: PropertyDTO) => ({ code: p.code, status: p.status }))
-          );
-        }
-      });
   }, []);
+
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("ALL");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   const filtered = useMemo(() => {
     return contracts.filter((c) => {
@@ -328,13 +239,11 @@ export default function ContractsPage() {
   const stats = useMemo(() => {
     const activos = filtered.filter((c) => c.status === "ACTIVE").length;
     const total = filtered.length;
-    const sumaBase = filtered.reduce((acc, c) => acc + (Number.isFinite(c.billing?.baseRent) ? c.billing.baseRent : 0), 0);
-
-    return {
-      total,
-      activos,
-      sumaBase,
-    };
+    const sumaBase = filtered.reduce(
+      (acc, c) => acc + (Number.isFinite(c.billing?.baseRent) ? c.billing.baseRent : 0),
+      0
+    );
+    return { total, activos, sumaBase };
   }, [filtered]);
 
   return (
@@ -356,540 +265,34 @@ export default function ContractsPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <Link href="/installments" className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
+          <Link
+            href="/installments"
+            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"
+          >
             Ir a Cuotas
           </Link>
-          <Link href="/payments" className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
+          <Link
+            href="/payments"
+            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"
+          >
             Ir a Pagos
           </Link>
 
-          <button
-            onClick={() => {
-              setEditContrato(null);
-              setShowAltaModal(true);
-              setNuevoContrato({
-                duracion: "",
-                titular: "",
-                inquilino: "",
-                valorCuota: "",
-                actualizacionCada: "",
-                porcentajeActualizacion: "",
-                montoCuota: "",
-                comision: "",
-                expensas: "no",
-                otrosGastosImporte: "",
-                otrosGastosDesc: "",
-                propiedadId: "",
-                fechaInicio: "",
-                fechaFin: "",
-                diaVencimiento: "",
-                currency: "",
-                lateFeeType: "",
-                lateFeeValue: "",
-                notes: "",
-                documents: [] as unknown[],
-              });
-            }}
-            className="rounded-xl border bg-green-600 px-4 py-2 text-sm text-white font-semibold shadow hover:brightness-110 transition cursor-pointer"
-            type="button"
+          {/* ✅ ÚNICO botón de alta: siempre va a /contracts/new */}
+          <Link
+            href="/contracts/new"
+            className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 text-sm text-emerald-200 font-semibold shadow hover:brightness-110 transition cursor-pointer"
           >
-            +Alta Contrato
-          </button>
+            + Alta Contrato
+          </Link>
         </div>
-
-        {showAltaModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-            <div
-              className="mx-auto rounded-2xl border border-white/10 bg-neutral-800 shadow-2xl py-4 px-2 sm:px-8 relative"
-              style={{
-                width: "100%",
-                maxWidth: 1300,
-                minWidth: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                boxSizing: "border-box",
-                maxHeight: "90vh",
-                overflowY: "auto",
-              }}
-            >
-              <button
-                className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-neutral-700 hover:bg-red-500 transition text-white shadow cursor-pointer border border-white/10"
-                type="button"
-                aria-label="Cerrar"
-                onClick={() => setShowAltaModal(false)}
-                title="Cerrar"
-              >
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7 11H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  <path d="M11 7V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
-
-              <form className="w-full" style={{ width: "100%" }} autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-x-6 gap-y-4 w-full">
-                  <div className="col-span-full mb-2">
-                    <h2 className="text-xl font-bold text-green-400">{editContrato ? `Editar contrato ${editContrato.code}` : "Alta de Contrato"}</h2>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">N° Contrato</label>
-                    <input type="text" value="(auto)" disabled className="w-full rounded border px-2 py-1 bg-neutral-800 text-white opacity-70 text-sm" />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Propiedad</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.propiedadId || ""}
-                      onChange={(e) => {
-                        const propId = e.target.value;
-                        const prop = propiedades.find((p) => p._id === propId);
-                        setNuevoContrato((n) => {
-                          let titular = n.titular;
-                          let inquilino = n.inquilino;
-
-                          if (!titular && prop?.ownerId && typeof prop.ownerId === "object" && (prop.ownerId as PersonDTO)._id) {
-                            titular = (prop.ownerId as PersonDTO)._id;
-                          }
-                          if (!inquilino && prop?.inquilinoId && typeof prop.inquilinoId === "object" && (prop.inquilinoId as PersonDTO)._id) {
-                            inquilino = (prop.inquilinoId as PersonDTO)._id;
-                          }
-
-                          return { ...n, propiedadId: propId, titular, inquilino };
-                        });
-                      }}
-                    >
-                      {(() => {
-                        const propiedadesConContratoActivo = new Set(
-                          contracts
-                            .filter((c) => c.status === "ACTIVE")
-                            .map((c) => {
-                              if (typeof c.propertyId === "string") return c.propertyId;
-                              return c.propertyId?._id;
-                            })
-                            .filter(Boolean)
-                        );
-
-                        return [
-                          <option value="" key="empty">
-                            Seleccionar propiedad...
-                          </option>,
-                          ...propiedades
-                            .filter((p) => !propiedadesConContratoActivo.has(p._id))
-                            .map((p) => {
-                              const labelBase = `${p.code} - ${p.addressLine}${p.unit ? ` (${p.unit})` : ""}`;
-                              return (
-                                <option key={p._id} value={p._id}>
-                                  {labelBase}
-                                </option>
-                              );
-                            }),
-                        ];
-                      })()}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Duración (meses)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="24"
-                      value={nuevoContrato.duracion}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, duracion: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Fecha inicio</label>
-                    <input
-                      type="date"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.fechaInicio || ""}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, fechaInicio: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Fecha fin</label>
-                    <input
-                      type="date"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.fechaFin || ""}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, fechaFin: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Día de vencimiento</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="28"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Ej: 10"
-                      value={nuevoContrato.diaVencimiento || ""}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, diaVencimiento: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Titular</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.titular}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, titular: e.target.value }))}
-                    >
-                      <option value="">Seleccionar titular...</option>
-                      {titulares.map((t) => (
-                        <option key={t._id} value={t._id}>
-                          {t.fullName} {t.code ? `(${t.code})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Inquilino</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.inquilino}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, inquilino: e.target.value }))}
-                    >
-                      <option value="">Seleccionar inquilino...</option>
-                      {inquilinos.map((i) => (
-                        <option key={i._id} value={i._id}>
-                          {i.fullName} {i.code ? `(${i.code})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div />
-
-                  <div>
-                    <label className="block mb-1 font-medium">Valor cuota</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Monto en ARS"
-                      value={nuevoContrato.valorCuota}
-                      onChange={(e) => {
-                        const valor = e.target.value;
-                        setNuevoContrato((n) => {
-                          const porcentaje = parseFloat(n.porcentajeActualizacion) || 0;
-                          const base = parseFloat(valor) || 0;
-                          const montoCuota = (base + (base * porcentaje) / 100).toFixed(2);
-                          return { ...n, valorCuota: valor, montoCuota };
-                        });
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Actualización cada (meses)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Ej: 3"
-                      value={nuevoContrato.actualizacionCada}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, actualizacionCada: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">% de actualización</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Ej: 5"
-                      value={nuevoContrato.porcentajeActualizacion}
-                      onChange={(e) => {
-                        const porcentaje = e.target.value;
-                        setNuevoContrato((n) => {
-                          const base = parseFloat(n.valorCuota) || 0;
-                          const montoCuota = (base + (base * (parseFloat(porcentaje) || 0)) / 100).toFixed(2);
-                          return { ...n, porcentajeActualizacion: porcentaje, montoCuota };
-                        });
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Monto cuota a pagar</label>
-                    <input
-                      type="text"
-                      value={(() => {
-                        const base = parseFloat(nuevoContrato.valorCuota) || 0;
-                        return base > 0 ? base.toFixed(2) : "-";
-                      })()}
-                      disabled
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-white opacity-70 text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Comisión inmobiliaria (%)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Ej: 5"
-                      value={nuevoContrato.comision}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, comision: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Monto comisión inmobiliaria</label>
-                    <input
-                      type="text"
-                      value={(() => {
-                        const base = parseFloat(nuevoContrato.valorCuota) || 0;
-                        const comision = parseFloat(nuevoContrato.comision) || 0;
-                        if (base > 0 && comision > 0) return ((base * comision) / 100).toFixed(2);
-                        return "-";
-                      })()}
-                      disabled
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-white opacity-70 text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Expensas</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.expensas}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, expensas: e.target.value }))}
-                    >
-                      <option value="no">No</option>
-                      <option value="si">Sí</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Otros gastos (importe)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Importe"
-                      value={nuevoContrato.otrosGastosImporte}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, otrosGastosImporte: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Detalle de gasto</label>
-                    <input
-                      type="text"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Descripción"
-                      value={nuevoContrato.otrosGastosDesc}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, otrosGastosDesc: e.target.value }))}
-                    />
-                  </div>
-
-                  <div />
-
-                  <div>
-                    <label className="block mb-1 font-medium">Moneda</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.currency}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, currency: e.target.value }))}
-                    >
-                      <option value="">Seleccionar moneda...</option>
-                      <option value="ARS">ARS</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Tipo de interés por mora</label>
-                    <select
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      value={nuevoContrato.lateFeeType}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, lateFeeType: e.target.value }))}
-                    >
-                      <option value="">Sin interés</option>
-                      <option value="FIXED">Fijo</option>
-                      <option value="PERCENT">Porcentaje diario (%)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block mb-1 font-medium">Valor interés por mora</label>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                        placeholder={"Ej: 1 para 1% diario"}
-                        value={nuevoContrato.lateFeeValue}
-                        onChange={(e) => setNuevoContrato((n) => ({ ...n, lateFeeValue: e.target.value }))}
-                      />
-                      {nuevoContrato.lateFeeType === "PERCENT" && <span className="text-neutral-300">%</span>}
-                    </div>
-                  </div>
-
-                  <div className="col-span-full">
-                    <label className="block mb-1 font-medium">Notas de facturación</label>
-                    <input
-                      type="text"
-                      className="w-full rounded border px-2 py-1 bg-neutral-800 text-black text-sm"
-                      placeholder="Notas"
-                      value={nuevoContrato.notes}
-                      onChange={(e) => setNuevoContrato((n) => ({ ...n, notes: e.target.value }))}
-                    />
-                  </div>
-
-                  {errorAlta && <div className="col-span-full text-red-400 text-sm mt-2">{errorAlta}</div>}
-                </div>
-              </form>
-
-              <div className="w-full flex justify-center mt-6">
-                <button
-                  type="button"
-                  className="rounded-xl px-6 py-2 text-white font-semibold shadow bg-green-600 hover:brightness-110 text-base disabled:opacity-60"
-                  disabled={guardando}
-                  onClick={async () => {
-                    setErrorAlta("");
-                    setGuardando(true);
-
-                    if (!nuevoContrato.titular || !nuevoContrato.inquilino || !nuevoContrato.duracion || !nuevoContrato.valorCuota || !nuevoContrato.propiedadId || !nuevoContrato.fechaInicio || !nuevoContrato.diaVencimiento) {
-                      setErrorAlta("Completa todos los campos obligatorios.");
-                      setGuardando(false);
-                      return;
-                    }
-
-                    try {
-                      const duracionMeses = toNum(nuevoContrato.duracion);
-                      const montoBase = toNum(nuevoContrato.valorCuota);
-                      const dueDay = toNum(nuevoContrato.diaVencimiento);
-
-                      const actualizacionCadaMesesRaw = nuevoContrato.actualizacionCada ? toNum(nuevoContrato.actualizacionCada) : 0;
-                      const actualizacionCadaMeses = Number.isFinite(actualizacionCadaMesesRaw) ? Math.max(0, Math.floor(actualizacionCadaMesesRaw)) : 0;
-
-                      const pct = nuevoContrato.porcentajeActualizacion ? toNum(nuevoContrato.porcentajeActualizacion) : 0;
-
-                      if (!Number.isFinite(duracionMeses) || duracionMeses < 1) {
-                        setErrorAlta("La duración (meses) debe ser >= 1.");
-                        setGuardando(false);
-                        return;
-                      }
-                      if (!Number.isFinite(montoBase) || montoBase < 0) {
-                        setErrorAlta("El valor cuota (monto base) es inválido.");
-                        setGuardando(false);
-                        return;
-                      }
-                      if (!Number.isFinite(dueDay) || dueDay < 1 || dueDay > 28) {
-                        setErrorAlta("El día de vencimiento debe ser 1..28.");
-                        setGuardando(false);
-                        return;
-                      }
-
-                      const ajustes = actualizacionCadaMeses > 0 ? buildAjustes(duracionMeses, actualizacionCadaMeses, pct) : [];
-
-                      const contractPayload = {
-                        propertyId: nuevoContrato.propiedadId,
-                        ownerId: nuevoContrato.titular,
-                        tenantPersonId: nuevoContrato.inquilino,
-                        startDate: nuevoContrato.fechaInicio,
-
-                        duracionMeses,
-                        montoBase: Math.round(montoBase),
-
-                        dueDay,
-                        currency: (nuevoContrato.currency || "ARS").trim() || "ARS",
-
-                        actualizacionCadaMeses,
-                        ajustes,
-                      };
-
-                      let res: Response;
-
-                      // ✅ FIX ESLINT: no any
-                      let data: { ok?: boolean; message?: string; error?: unknown } | undefined;
-
-                      if (editContrato) {
-                        res = await fetch(`/api/contracts/${editContrato._id}`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            ...contractPayload,
-                            duracion: duracionMeses,
-                            valorCuota: montoBase,
-                            diaVencimiento: dueDay,
-                            actualizacionCada: actualizacionCadaMeses,
-                            porcentajeActualizacion: pct,
-                          }),
-                        });
-
-                        data = (await res.json()) as { ok?: boolean; message?: string; error?: unknown };
-                        if (!data.ok) throw new Error(data.message || "Error al editar contrato");
-                      } else {
-                        res = await fetch("/api/contracts", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify(contractPayload),
-                        });
-
-                        data = (await res.json()) as { ok?: boolean; message?: string; error?: unknown };
-                        if (!data.ok) throw new Error(data.message || "Error al crear contrato");
-                      }
-
-                      if (toast.show) toast.show("Contrato guardado OK");
-
-                      setShowAltaModal(false);
-                      setNuevoContrato({
-                        duracion: "",
-                        titular: "",
-                        inquilino: "",
-                        valorCuota: "",
-                        actualizacionCada: "",
-                        porcentajeActualizacion: "",
-                        montoCuota: "",
-                        comision: "",
-                        expensas: "no",
-                        otrosGastosImporte: "",
-                        otrosGastosDesc: "",
-                        propiedadId: "",
-                        fechaInicio: "",
-                        fechaFin: "",
-                        diaVencimiento: "",
-                        currency: "",
-                        lateFeeType: "",
-                        lateFeeValue: "",
-                        notes: "",
-                        documents: [] as unknown[],
-                      });
-
-                      await load();
-                    } catch (err2) {
-                      setErrorAlta(err2 instanceof Error ? err2.message : "No se pudo guardar el contrato");
-                    } finally {
-                      setGuardando(false);
-                    }
-                  }}
-                >
-                  {guardando ? "Guardando..." : "Guardar Contrato"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {err ? <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{err}</div> : null}
+      {err ? (
+        <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {err}
+        </div>
+      ) : null}
 
       <div className="mt-6 grid grid-cols-3 gap-4">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -910,11 +313,11 @@ export default function ContractsPage() {
         <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">Filtros</div>
         <div className="p-4 grid grid-cols-4 gap-4">
           <div className="col-span-2">
-            <div className="text-xs text-neutral-400 mb-1">BÚSQUEDA (código, dirección, owner/tenant, email, etc.)</div>
+            <div className="text-xs text-neutral-400 mb-1">BÚSQUEDA</div>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Ej: CID-001, PID-001, Propietario Demo, Bv. Demo..."
+              placeholder="Código, dirección, propietario, inquilino..."
               className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
             />
           </div>
@@ -958,6 +361,7 @@ export default function ContractsPage() {
         </div>
       </div>
 
+      {/* Tabla */}
       <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">Contratos ({filtered.length})</div>
 
@@ -969,7 +373,7 @@ export default function ContractsPage() {
               <div className="col-span-4 pr-0!">Propiedad</div>
               <div className="col-span-2 pl-0!">Propietario</div>
               <div className="col-span-1">Inquilino</div>
-              <div className="col-span-1 text-right">Acción</div>
+              <div className="col-span-2 text-right">Acción</div>
             </div>
 
             {filtered.length === 0 ? (
@@ -985,7 +389,9 @@ export default function ContractsPage() {
                 return (
                   <div key={c._id} className="grid grid-cols-12 gap-0 px-4 py-3 border-t border-white/10 text-sm items-center">
                     <div className="col-span-1">
-                      <span className={`inline-flex items-center rounded-xl border px-2.5 py-1 text-xs ${badge.cls}`}>{badge.label}</span>
+                      <span className={`inline-flex items-center rounded-xl border px-2.5 py-1 text-xs ${badge.cls}`}>
+                        {badge.label}
+                      </span>
                     </div>
 
                     <div className="col-span-2">
@@ -1004,173 +410,28 @@ export default function ContractsPage() {
                       <div className="text-neutral-200">{t?.fullName || "—"}</div>
                     </div>
 
-                    <div className="col-span-1 flex justify-end w-full gap-2">
-                      <div className="flex w-full gap-2 justify-start">
-                        <button
-                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition whitespace-nowrap"
-                          title="Ver"
-                          onClick={() => {
-                            setCuotasModal({
-                              open: true,
-                              cuotas: generarCuotasSimuladas(c),
-                              contrato: c,
-                            });
-                          }}
-                        >
-                          Ver
-                        </button>
+                    <div className="col-span-2 flex justify-end w-full gap-2">
+                      <button
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition whitespace-nowrap"
+                        title="Ver"
+                        onClick={() => {
+                          setCuotasModal({
+                            open: true,
+                            cuotas: generarCuotasSimuladas(c),
+                            contrato: c,
+                          });
+                        }}
+                      >
+                        Ver
+                      </button>
 
-                        {cuotasModal.open && cuotasModal.contrato && (
-                          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                            <div className="mx-auto rounded-2xl border border-white/10 bg-neutral-800 shadow-2xl py-6 px-8 relative flex flex-col items-center" style={{ maxWidth: 400, minWidth: 0 }}>
-                              <button
-                                className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-neutral-700 hover:bg-red-500 transition text-white shadow cursor-pointer border border-white/10"
-                                type="button"
-                                aria-label="Cerrar"
-                                onClick={() => setCuotasModal({ open: false, cuotas: [], contrato: null })}
-                                title="Cerrar"
-                              >
-                                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                  <path d="M7 11H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                  <path d="M11 7V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                </svg>
-                              </button>
-
-                              <h2 className="text-xl font-bold text-green-400 mb-4">Contrato {cuotasModal.contrato.code}</h2>
-
-                              <div className="w-full flex flex-col gap-2 text-sm text-neutral-200">
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Estado:</span> {statusBadge(cuotasModal.contrato.status).label}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Propiedad:</span>{" "}
-                                  {(() => {
-                                    const pp = getProperty(cuotasModal.contrato);
-                                    return pp ? `${pp.code} - ${pp.addressLine}${pp.unit ? ` (${pp.unit})` : ""}` : safeText(cuotasModal.contrato.propertyId);
-                                  })()}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Titular:</span>{" "}
-                                  {(() => {
-                                    const oo = getOwner(cuotasModal.contrato);
-                                    return oo ? `${oo.fullName}${oo.code ? ` (${oo.code})` : ""}` : "";
-                                  })()}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Inquilino:</span>{" "}
-                                  {(() => {
-                                    const tt = getTenant(cuotasModal.contrato);
-                                    return tt ? `${tt.fullName}${tt.code ? ` (${tt.code})` : ""}` : "";
-                                  })()}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Fecha inicio:</span>{" "}
-                                  {cuotasModal.contrato.startDate ? cuotasModal.contrato.startDate.slice(0, 10) : "-"}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Fecha fin:</span> {cuotasModal.contrato.endDate ? cuotasModal.contrato.endDate.slice(0, 10) : "-"}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Valor cuota:</span>{" "}
-                                  {formatARS(cuotasModal.contrato.valorCuota ?? cuotasModal.contrato.billing?.baseRent ?? 0)}
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Duración:</span> {cuotasModal.contrato.duracion} meses
-                                </div>
-                                <div>
-                                  <span className="font-semibold text-neutral-400">Día de vencimiento:</span>{" "}
-                                  {cuotasModal.contrato.diaVencimiento ?? cuotasModal.contrato.billing?.dueDay ?? "-"}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        <button
-                          className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 transition whitespace-nowrap"
-                          title="Editar"
-                          onClick={() => {
-                            setEditContrato(c);
-                            setShowAltaModal(true);
-                            setNuevoContrato({
-                              duracion: (c.duracion ?? "").toString(),
-                              titular: typeof c.ownerId === "string" ? c.ownerId : c.ownerId?._id || "",
-                              inquilino: typeof c.tenantPersonId === "string" ? c.tenantPersonId : c.tenantPersonId?._id || "",
-                              valorCuota: (c.valorCuota ?? c.billing?.baseRent ?? "").toString(),
-                              actualizacionCada: (c.actualizacionCada ?? c.billing?.actualizacionCada ?? "").toString(),
-                              porcentajeActualizacion: (c.porcentajeActualizacion ?? c.billing?.porcentajeActualizacion ?? "").toString(),
-                              montoCuota: (c.montoCuota ?? "").toString(),
-                              comision: (c.comision ?? "").toString(),
-                              expensas: c.expensas ?? "no",
-                              otrosGastosImporte: (c.otrosGastosImporte ?? "").toString(),
-                              otrosGastosDesc: c.otrosGastosDesc ?? "",
-                              propiedadId: typeof c.propertyId === "string" ? c.propertyId : c.propertyId?._id || "",
-                              fechaInicio: c.startDate ? c.startDate.slice(0, 10) : "",
-                              fechaFin: c.endDate ? c.endDate.slice(0, 10) : "",
-                              diaVencimiento: (c.diaVencimiento ?? c.billing?.dueDay ?? "").toString(),
-                              currency: c.billing?.currency ?? "",
-                              lateFeeType: c.billing?.lateFeePolicy?.type ?? "",
-                              lateFeeValue: c.billing?.lateFeePolicy?.value?.toString() ?? "",
-                              notes: c.billing?.notes ?? "",
-                              documents: [] as unknown[],
-                            });
-                          }}
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/20 transition whitespace-nowrap"
-                          title="Borrar"
-                          onClick={() => setDeleteModal({ open: true, contrato: c })}
-                        >
-                          Borrar
-                        </button>
-
-                        {deleteModal.open && deleteModal.contrato && (
-                          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                            <div className="mx-auto rounded-2xl border border-red-500/30 bg-neutral-900 shadow-2xl py-6 px-6 relative flex flex-col items-center" style={{ maxWidth: 400 }}>
-                              <h2 className="text-xl font-bold text-red-400 mb-4">¿Eliminar contrato?</h2>
-                              <div className="text-neutral-200 mb-4 text-center">
-                                Se eliminará el contrato <span className="font-bold text-red-300">{deleteModal.contrato.code}</span>.
-                                <br />
-                                Esta acción no se puede deshacer.
-                              </div>
-                              <div className="flex gap-4 mt-2">
-                                <button
-                                  className="rounded-xl px-5 py-2 text-white font-semibold shadow bg-red-600 hover:brightness-110 text-base"
-                                  onClick={async () => {
-                                    if (toast.show) toast.show(`Eliminando contrato ${deleteModal.contrato?.code}...`);
-                                    try {
-                                      const res = await fetch(`/api/contracts/${String(deleteModal.contrato?._id)}`, { method: "DELETE" });
-                                      const data = await res.json();
-                                      if (!data.ok) {
-                                        if (toast.show) toast.show(data.message || "No se pudo eliminar el contrato");
-                                        setDeleteModal({ open: false, contrato: null });
-                                        return;
-                                      }
-                                      if (toast.show) toast.show("Contrato eliminado correctamente");
-                                      setDeleteModal({ open: false, contrato: null });
-                                      await load();
-                                    } catch {
-                                      if (toast.show) toast.show("Error eliminando contrato");
-                                      setDeleteModal({ open: false, contrato: null });
-                                    }
-                                  }}
-                                >
-                                  Eliminar
-                                </button>
-                                <button
-                                  className="rounded-xl px-5 py-2 text-white font-semibold shadow bg-neutral-700 hover:brightness-110 text-base"
-                                  onClick={() => setDeleteModal({ open: false, contrato: null })}
-                                >
-                                  Cancelar
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      <button
+                        className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/20 transition whitespace-nowrap"
+                        title="Borrar"
+                        onClick={() => setDeleteModal({ open: true, contrato: c })}
+                      >
+                        Borrar
+                      </button>
                     </div>
                   </div>
                 );
@@ -1179,6 +440,120 @@ export default function ContractsPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal VER */}
+      {cuotasModal.open && cuotasModal.contrato ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div
+            className="mx-auto rounded-2xl border border-white/10 bg-neutral-900 shadow-2xl py-6 px-8 relative flex flex-col items-center"
+            style={{ maxWidth: 520, minWidth: 0 }}
+          >
+            <button
+              className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-red-500 transition text-white shadow cursor-pointer border border-white/10"
+              type="button"
+              aria-label="Cerrar"
+              onClick={() => setCuotasModal({ open: false, cuotas: [], contrato: null })}
+              title="Cerrar"
+            >
+              ✕
+            </button>
+
+            <h2 className="text-xl font-bold text-emerald-400 mb-4">Contrato {cuotasModal.contrato.code}</h2>
+
+            <div className="w-full flex flex-col gap-2 text-sm text-neutral-200">
+              <div>
+                <span className="font-semibold text-neutral-400">Estado:</span> {statusBadge(cuotasModal.contrato.status).label}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Propiedad:</span>{" "}
+                {(() => {
+                  const pp = getProperty(cuotasModal.contrato);
+                  return pp ? `${pp.code} - ${pp.addressLine}${pp.unit ? ` (${pp.unit})` : ""}` : safeText(cuotasModal.contrato.propertyId);
+                })()}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Titular:</span>{" "}
+                {(() => {
+                  const oo = getOwner(cuotasModal.contrato);
+                  return oo ? `${oo.fullName}${oo.code ? ` (${oo.code})` : ""}` : "—";
+                })()}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Inquilino:</span>{" "}
+                {(() => {
+                  const tt = getTenant(cuotasModal.contrato);
+                  return tt ? `${tt.fullName}${tt.code ? ` (${tt.code})` : ""}` : "—";
+                })()}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Fecha inicio:</span>{" "}
+                {cuotasModal.contrato.startDate ? cuotasModal.contrato.startDate.slice(0, 10) : "-"}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Fecha fin:</span>{" "}
+                {cuotasModal.contrato.endDate ? cuotasModal.contrato.endDate.slice(0, 10) : "-"}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Valor alquiler:</span>{" "}
+                {formatARS(cuotasModal.contrato.billing?.baseRent ?? 0)}
+              </div>
+              <div>
+                <span className="font-semibold text-neutral-400">Día vencimiento:</span>{" "}
+                {cuotasModal.contrato.billing?.dueDay ?? "-"}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Modal BORRAR */}
+      {deleteModal.open && deleteModal.contrato ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div
+            className="mx-auto rounded-2xl border border-red-500/30 bg-neutral-900 shadow-2xl py-6 px-6 relative flex flex-col items-center"
+            style={{ maxWidth: 420 }}
+          >
+            <h2 className="text-xl font-bold text-red-400 mb-4">¿Eliminar contrato?</h2>
+            <div className="text-neutral-200 mb-4 text-center">
+              Se eliminará el contrato{" "}
+              <span className="font-bold text-red-300">{deleteModal.contrato.code}</span>.
+              <br />
+              Esta acción no se puede deshacer.
+            </div>
+            <div className="flex gap-4 mt-2">
+              <button
+                className="rounded-xl px-5 py-2 text-white font-semibold shadow bg-red-600 hover:brightness-110 text-base"
+                onClick={async () => {
+                  if (toast.show) toast.show(`Eliminando contrato ${deleteModal.contrato?.code}...`);
+                  try {
+                    const res = await fetch(`/api/contracts/${String(deleteModal.contrato?._id)}`, { method: "DELETE" });
+                    const data = (await res.json()) as { ok?: boolean; message?: string };
+                    if (!data.ok) {
+                      if (toast.show) toast.show(data.message || "No se pudo eliminar el contrato");
+                      setDeleteModal({ open: false, contrato: null });
+                      return;
+                    }
+                    if (toast.show) toast.show("Contrato eliminado correctamente");
+                    setDeleteModal({ open: false, contrato: null });
+                    await load();
+                  } catch {
+                    if (toast.show) toast.show("Error eliminando contrato");
+                    setDeleteModal({ open: false, contrato: null });
+                  }
+                }}
+              >
+                Eliminar
+              </button>
+              <button
+                className="rounded-xl px-5 py-2 text-white font-semibold shadow bg-neutral-800 hover:bg-neutral-700 text-base border border-white/10"
+                onClick={() => setDeleteModal({ open: false, contrato: null })}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
