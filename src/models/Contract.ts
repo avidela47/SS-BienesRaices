@@ -68,7 +68,7 @@ const BillingSchema = new Schema<BillingBlock>(
     actualizacionCadaMeses: { type: Number, required: true, default: 0 },
     ajustes: { type: [BillingAdjustmentSchema], required: true, default: [] },
     lateFeePolicy: { type: LateFeePolicySchema, required: true, default: { type: "NONE", value: 0 } },
-    notes: { type: String, required: true, default: "" },
+  notes: { type: String, default: "" },
   },
   { _id: false }
 );

@@ -35,11 +35,12 @@ type PatchBody = Partial<{
   availableFrom: Date | string | null;
 }>;
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await dbConnect();
 
-    const id = (params?.id ?? "").trim();
+    const { id: rawId } = await params;
+    const id = (rawId ?? "").trim();
     const body = (await req.json()) as PatchBody;
 
     if (!isValidObjectId(id)) {
@@ -136,11 +137,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await dbConnect();
 
-    const id = (params?.id ?? "").trim();
+    const { id: rawId } = await params;
+    const id = (rawId ?? "").trim();
     if (!isValidObjectId(id)) {
       return NextResponse.json({ ok: false, message: "No se encontró la propiedad" }, { status: 404 });
     }

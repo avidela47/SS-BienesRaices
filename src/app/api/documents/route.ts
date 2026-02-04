@@ -17,7 +17,16 @@ function getErrorMessage(err: unknown): string {
 }
 
 function isEntityType(x: string): x is DocumentEntityType {
-  return x === "OWNER" || x === "TENANT" || x === "GUARANTOR" || x === "AGENCY";
+  return (
+    x === "OWNER" ||
+    x === "TENANT" ||
+    x === "GUARANTOR" ||
+    x === "PROPERTY" ||
+    x === "CONTRACT" ||
+    x === "PAYMENT" ||
+    x === "INSTALLMENT" ||
+    x === "AGENCY"
+  );
 }
 
 async function ensureUploadsDir() {
@@ -33,8 +42,9 @@ export async function GET(req: Request) {
     await dbConnect();
 
     const url = new URL(req.url);
-    const entityTypeParam = (url.searchParams.get("entityType") || "").toUpperCase().trim();
-    const personId = (url.searchParams.get("personId") || "").trim();
+  const entityTypeParam = (url.searchParams.get("entityType") || "").toUpperCase().trim();
+  const entityId = (url.searchParams.get("entityId") || "").trim();
+  const personId = (url.searchParams.get("personId") || "").trim();
 
     if (!entityTypeParam || !isEntityType(entityTypeParam)) {
       return NextResponse.json(
@@ -49,13 +59,19 @@ export async function GET(req: Request) {
     };
 
     if (entityTypeParam !== "AGENCY") {
-      if (!personId) {
+      const effectiveId = entityId || personId;
+      if (!effectiveId) {
         return NextResponse.json(
-          { ok: false, message: "personId es obligatorio para OWNER/TENANT/GUARANTOR" },
+          { ok: false, message: "entityId es obligatorio para este tipo" },
           { status: 400 }
         );
       }
-      filter.personId = personId;
+
+      if (personId && !entityId) {
+        filter.$or = [{ entityId: effectiveId }, { personId: effectiveId }];
+      } else {
+        filter.entityId = effectiveId;
+      }
     }
 
     const docs = await Document.find(filter).sort({ createdAt: -1 }).lean();
@@ -76,9 +92,11 @@ export async function POST(req: Request) {
 
     const form = await req.formData();
 
-    const entityTypeRaw = String(form.get("entityType") || "").toUpperCase().trim();
-    const personIdRaw = String(form.get("personId") || "").trim();
+  const entityTypeRaw = String(form.get("entityType") || "").toUpperCase().trim();
+  const entityIdRaw = String(form.get("entityId") || "").trim();
+  const personIdRaw = String(form.get("personId") || "").trim();
     const notes = String(form.get("notes") || "").trim();
+  const docType = String(form.get("docType") || "").trim();
 
     if (!entityTypeRaw || !isEntityType(entityTypeRaw)) {
       return NextResponse.json(
@@ -87,11 +105,11 @@ export async function POST(req: Request) {
       );
     }
 
-    if (entityTypeRaw !== "AGENCY" && !personIdRaw) {
-      return NextResponse.json(
-        { ok: false, message: "personId es obligatorio para OWNER/TENANT/GUARANTOR" },
-        { status: 400 }
-      );
+    if (entityTypeRaw !== "AGENCY") {
+      const effectiveId = entityIdRaw || personIdRaw;
+      if (!effectiveId) {
+        return NextResponse.json({ ok: false, message: "entityId es obligatorio" }, { status: 400 });
+      }
     }
 
     const file = form.get("file");
@@ -112,16 +130,20 @@ export async function POST(req: Request) {
 
     const url = `/uploads/${storedName}`;
 
+    const effectiveEntityId = entityTypeRaw === "AGENCY" ? undefined : entityIdRaw || personIdRaw;
+
     const doc = await Document.create({
       tenantId: TENANT_ID,
       entityType: entityTypeRaw,
-      personId: entityTypeRaw === "AGENCY" ? undefined : personIdRaw,
+      entityId: effectiveEntityId,
+      personId: entityTypeRaw === "AGENCY" ? undefined : personIdRaw || undefined,
       originalName,
       storedName,
       mimeType,
       size,
       url,
       notes,
+      docType: docType || "OTRO",
     });
 
     return NextResponse.json({ ok: true, document: doc });

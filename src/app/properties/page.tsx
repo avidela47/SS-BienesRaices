@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
 import { apiGet } from "@/lib/api";
 import type { PropertyDTO } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
@@ -87,7 +88,6 @@ async function safeReadError(res: Response): Promise<string> {
 
 export default function Propiedades() {
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [properties, setProperties] = useState<PropertyDTO[]>([]);
   const [error, setError] = useState<string>("");
@@ -104,7 +104,6 @@ export default function Propiedades() {
 
   const fetchProperties = async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setLoading(true);
-    else setRefreshing(true);
 
     setError("");
     try {
@@ -126,7 +125,6 @@ export default function Propiedades() {
       setError(e instanceof Error ? e.message : "Error cargando propiedades.");
     } finally {
       if (mode === "initial") setLoading(false);
-      else setRefreshing(false);
     }
   };
 
@@ -172,41 +170,28 @@ export default function Propiedades() {
   }, [filtered]);
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            title="Ir a inicio"
-            className="flex items-center justify-center w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 transition text-xl text-neutral-100"
-          >
-            <span>←</span>
-          </Link>
-
+    <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
+      <div className="mx-auto max-w-6xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-white">Propiedades</h1>
-            <p className="text-sm text-white/60 mt-1">Gestión de propiedades con propietario, inquilino y estado.</p>
+            <h1 className="text-xl font-semibold">Propiedades</h1>
+            <p className="text-sm opacity-70">Gestión de propiedades con propietario, inquilino y estado.</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <BackButton />
+            <Link
+              href="/properties/new"
+              title="Nueva propiedad"
+              aria-label="Nueva propiedad"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              style={{ color: "var(--benetton-green)" }}
+            >
+              +
+            </Link>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => void fetchProperties("refresh")}
-            className="px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm"
-            disabled={loading || refreshing}
-          >
-            {refreshing ? "Actualizando..." : "Actualizar"}
-          </button>
-
-          <Link
-            href="/properties/new"
-            className="px-3 py-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 hover:bg-emerald-400/15 text-emerald-200 text-sm font-semibold"
-          >
-            + Alta Propiedad
-          </Link>
-        </div>
-      </div>
 
       {/* Error */}
       {error ? (
@@ -235,119 +220,123 @@ export default function Propiedades() {
         </div>
       </div>
 
-      {/* Filtros */}
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="md:col-span-2">
-            <div className="text-xs text-white/60 mb-1">Buscar</div>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Código, dirección, propietario, inquilino…"
-              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
-            />
+        {/* Filtros */}
+        <div className="rounded-2xl border border-white/10 bg-white/5 mb-4">
+          <div className="border-b border-white/10 px-5 py-4">
+            <div className="text-sm font-semibold">Filtros</div>
           </div>
 
-          <div>
-            <div className="text-xs text-white/60 mb-1">Estado</div>
-            <select
-              value={status}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "ALL") setStatus("ALL");
-                else if (isAppPropertyStatus(v)) setStatus(v);
-                else setStatus("ALL");
-              }}
-              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
-            >
-              <option value="ALL">Todos</option>
-              <option value="AVAILABLE">Disponible</option>
-              <option value="RENTED">Alquilada</option>
-              <option value="MAINTENANCE">Mantenimiento</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabla */}
-      <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-          <div className="text-sm font-semibold text-white">Listado</div>
-          <div className="text-xs text-white/60">{filtered.length} items</div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <div className="min-w-245">
-            <div className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] gap-0 px-4 py-2 text-xs text-white/70 bg-white/4">
-              <div>Código</div>
-              <div>Dirección</div>
-              <div>Estado</div>
-              <div>Propietario</div>
-              <div>Inquilino</div>
-              <div className="text-right">Acciones</div>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 px-5 py-4">
+            <div className="md:col-span-4">
+              <div className="mb-2 text-xs text-white/50">BUSCAR</div>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Código, dirección, propietario, inquilino…"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-white/10"
+              />
             </div>
 
-            {loading ? (
-              <div className="px-4 py-6 text-sm text-white/70">Cargando propiedades...</div>
-            ) : filtered.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-white/70">No hay propiedades registradas aún.</div>
-            ) : (
-              filtered.map((p) => {
-                const st = normalizeStatus((p as unknown as { status?: unknown })?.status);
+            <div className="md:col-span-2">
+              <div className="mb-2 text-xs text-white/50">ESTADO</div>
+              <select
+                value={status}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "ALL") setStatus("ALL");
+                  else if (isAppPropertyStatus(v)) setStatus(v);
+                  else setStatus("ALL");
+                }}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-white/10"
+              >
+                <option value="ALL">Todos</option>
+                <option value="AVAILABLE">Disponible</option>
+                <option value="RENTED">Alquilada</option>
+                <option value="MAINTENANCE">Mantenimiento</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
-                return (
-                  <div
-                    key={p._id}
-                    className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] px-4 py-3 border-t border-white/10 items-center"
-                  >
-                    <div>
-                      <div className="text-white font-extrabold">{p.code || "(sin código)"}</div>
-                      <div className="text-xs text-white/60">{p.province || "—"}</div>
+        {/* Tabla */}
+        <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+            <div className="text-sm font-semibold text-white">Listado</div>
+            <div className="text-xs text-white/60">{filtered.length} items</div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <div className="min-w-245">
+              <div className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] gap-0 px-4 py-2 text-xs text-white/70 bg-white/5">
+                <div>Código</div>
+                <div>Dirección</div>
+                <div>Estado</div>
+                <div>Propietario</div>
+                <div>Inquilino</div>
+                <div className="text-right">Acciones</div>
+              </div>
+
+              {loading ? (
+                <div className="px-4 py-6 text-sm text-white/70">Cargando propiedades...</div>
+              ) : filtered.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-white/70">No hay propiedades registradas aún.</div>
+              ) : (
+                filtered.map((p) => {
+                  const st = normalizeStatus((p as unknown as { status?: unknown })?.status);
+
+                  return (
+                    <div
+                      key={p._id}
+                      className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] px-4 py-3 border-t border-white/10 items-center"
+                    >
+                      <div>
+                        <div className="text-white font-extrabold">{p.code || "(sin código)"}</div>
+                        <div className="text-xs text-white/60">{p.province || "—"}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-white font-semibold">{p.addressLine}</div>
+                        <div className="text-xs text-white/60">{[p.unit, p.city].filter(Boolean).join(" • ") || "—"}</div>
+                      </div>
+
+                      <div>
+                        <span
+                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold border ${statusPillClass(
+                            st
+                          )}`}
+                        >
+                          {statusLabel(st)}
+                        </span>
+                      </div>
+
+                      <div className="text-sm text-white/85">{ownerName(p.ownerId)}</div>
+                      <div className="text-sm text-white/85">{tenantName(p.inquilinoId)}</div>
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs"
+                          onClick={() => setSelected(p)}
+                        >
+                          Ver
+                        </button>
+                        <button
+                          className="px-3 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 hover:bg-sky-400/15 text-white text-xs"
+                          onClick={() => setEditTarget(p)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          className="px-3 py-1.5 rounded-full border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white text-xs"
+                          onClick={() => setDeleteTarget(p)}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
                     </div>
-
-                    <div>
-                      <div className="text-white font-semibold">{p.addressLine}</div>
-                      <div className="text-xs text-white/60">{[p.unit, p.city].filter(Boolean).join(" • ") || "—"}</div>
-                    </div>
-
-                    <div>
-                      <span
-                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold border ${statusPillClass(
-                          st
-                        )}`}
-                      >
-                        {statusLabel(st)}
-                      </span>
-                    </div>
-
-                    <div className="text-sm text-white/85">{ownerName(p.ownerId)}</div>
-
-                    <div className="text-sm text-white/85">{p.inquilinoId ? tenantName(p.inquilinoId) : "—"}</div>
-
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs"
-                        onClick={() => setSelected(p)}
-                      >
-                        Ver
-                      </button>
-                      <button
-                        className="px-3 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 hover:bg-sky-400/15 text-white text-xs"
-                        onClick={() => setEditTarget(p)}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        className="px-3 py-1.5 rounded-full border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white text-xs"
-                        onClick={() => setDeleteTarget(p)}
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
 
@@ -440,6 +429,6 @@ export default function Propiedades() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }

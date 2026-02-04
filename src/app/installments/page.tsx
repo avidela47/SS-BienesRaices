@@ -2,13 +2,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
 import { useSearchParams, useRouter } from "next/navigation";
 import type { ApiError, ApiOk, InstallmentDTO, PaymentDTO, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/ToastProvider";
 
 type InstallmentsApi = ApiOk<InstallmentDTO[]> & { installments: InstallmentDTO[] };
 type PaymentsApi = ApiOk<PaymentDTO[]> & { payments: PaymentDTO[] };
+type ContractsApi = ApiOk<Array<{ _id: string; code?: string }>> & { contracts: Array<{ _id: string; code?: string }> };
 
 function formatMoneyARS(n: number): string {
   return n.toLocaleString("es-AR", { style: "currency", currency: "ARS" });
@@ -39,12 +40,14 @@ export default function InstallmentsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [installments, setInstallments] = useState<InstallmentDTO[]>([]);
   const [payments, setPayments] = useState<PaymentDTO[]>([]);
+  const [contracts, setContracts] = useState<Array<{ _id: string; code?: string }>>([]);
 
   // Filtros
   const [q, setQ] = useState<string>("");
-  const [status, setStatus] = useState<"ALL" | "PENDING" | "PAID" | "OVERDUE">("ALL");
+  const [status, setStatus] = useState<"ALL" | "PENDING" | "PAID" | "OVERDUE" | "PARTIAL">("ALL");
   const [periodFrom, setPeriodFrom] = useState<string>(""); // YYYY-MM
   const [periodTo, setPeriodTo] = useState<string>(""); // YYYY-MM
+  const [contractFilter, setContractFilter] = useState<string>("ALL");
 
   // Modal pago
   const [payOpen, setPayOpen] = useState<boolean>(false);
@@ -58,13 +61,15 @@ export default function InstallmentsPage() {
   async function loadAll(): Promise<void> {
     setLoading(true);
     try {
-      const [iRes, pRes] = await Promise.all([
+      const [iRes, pRes, cRes] = await Promise.all([
         fetch("/api/installments", { cache: "no-store" }),
         fetch("/api/payments", { cache: "no-store" }),
+        fetch("/api/contracts", { cache: "no-store" }),
       ]);
 
       const iJson = (await iRes.json()) as InstallmentsApi | ApiError;
-      const pJson = (await pRes.json()) as PaymentsApi | ApiError;
+  const pJson = (await pRes.json()) as PaymentsApi | ApiError;
+  const cJson = (await cRes.json()) as ContractsApi | ApiError;
 
       if (!iRes.ok || !("ok" in iJson) || iJson.ok !== true) {
         const err = (iJson as ApiError).error || "Error cargando alquiler mensual";
@@ -75,6 +80,12 @@ export default function InstallmentsPage() {
         setPayments([]);
       } else {
         setPayments(pJson.payments ?? []);
+      }
+
+      if (!cRes.ok || !("ok" in cJson) || cJson.ok !== true) {
+        setContracts([]);
+      } else {
+        setContracts(cJson.contracts ?? []);
       }
 
       setInstallments(iJson.installments ?? []);
@@ -91,6 +102,23 @@ export default function InstallmentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto seleccionar contrato solo si hay focus o si existe un único contrato
+  useEffect(() => {
+    if (contractFilter !== "ALL") return;
+
+    if (focusId) {
+      const focused = installments.find((it) => it._id === focusId);
+      if (focused) {
+        setContractFilter(focused.contractId);
+        return;
+      }
+    }
+
+    if (contracts.length === 1) {
+      setContractFilter(contracts[0]._id);
+    }
+  }, [contracts, contractFilter, focusId, installments]);
+
   // Focus scroll + highlight
   useEffect(() => {
     if (!focusId) return;
@@ -105,13 +133,20 @@ export default function InstallmentsPage() {
     return () => window.clearTimeout(t);
   }, [focusId, installments]);
 
+  const visibleInstallments = useMemo(() => {
+    if (!contracts.length) return installments;
+    const ids = new Set(contracts.map((c) => c._id));
+    return installments.filter((it) => ids.has(it.contractId));
+  }, [contracts, installments]);
+
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
 
-    return installments.filter((it) => {
-      if (status !== "ALL" && it.status !== status) return false;
+    return visibleInstallments.filter((it) => {
+  if (status !== "ALL" && it.status !== status) return false;
       if (periodFrom && it.period < periodFrom) return false;
       if (periodTo && it.period > periodTo) return false;
+  if (contractFilter !== "ALL" && it.contractId !== contractFilter) return false;
 
       if (!qq) return true;
 
@@ -123,20 +158,30 @@ export default function InstallmentsPage() {
 
       return hay;
     });
-  }, [installments, q, status, periodFrom, periodTo]);
+  }, [visibleInstallments, q, status, periodFrom, periodTo, contractFilter]);
+
+  const contractCodeById = useMemo(() => {
+    return contracts.reduce<Record<string, string>>((acc, c) => {
+      acc[c._id] = c.code || c._id;
+      return acc;
+    }, {});
+  }, [contracts]);
 
   const stats = useMemo(() => {
-    const total = installments.length;
-    const paid = installments.filter((x) => x.status === "PAID").length;
-    const pending = installments.filter((x) => x.status === "PENDING").length;
-    const overdue = installments.filter((x) => x.status === "OVERDUE").length;
+    const base = filtered;
+    const total = base.length;
+    const paid = base.filter((x) => x.status === "PAID").length;
+    const pending = base.filter((x) => x.status === "PENDING").length;
+    const partial = base.filter((x) => x.status === "PARTIAL").length;
+    const overdue = base.filter((x) => x.status === "OVERDUE").length;
+  const active = pending + partial + overdue;
 
-    const pendingAmount = installments
+    const pendingAmount = base
       .filter((x) => x.status !== "PAID")
       .reduce((acc, x) => acc + (x.amount - (x.paidAmount || 0)), 0);
 
-    return { total, paid, pending, overdue, pendingAmount };
-  }, [installments]);
+    return { total, paid, pending, partial, overdue, active, pendingAmount };
+  }, [filtered]);
 
   function openPayModal(it: InstallmentDTO): void {
     setPayTarget(it);
@@ -206,35 +251,20 @@ export default function InstallmentsPage() {
 
           {/* Acciones arriba derecha, pero visualmente son las “circulares” como en todas las páginas */}
           <div className="flex items-center gap-2">
-            {/* Volver */}
-            <button
-              type="button"
-              onClick={() => router.back()}
-              title="Volver"
-              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg"
-              aria-label="Volver"
-            >
-              ←
-            </button>
-
-            {/* Nuevo (+ verde) */}
-            <Link
-              href="/contracts"
-              title="Nuevo contrato (genera alquiler mensual)"
-              aria-label="Nuevo contrato"
-              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
-              style={{ color: "var(--benetton-green)" }}
-            >
-              +
-            </Link>
+            <BackButton onClick={() => router.back()} />
           </div>
         </div>
 
         {/* Stats */}
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-6 gap-4">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-white/50">TOTAL</div>
+            <div className="text-xs text-white/50">TOTAL (FILTRADO)</div>
             <div className="mt-1 text-2xl font-semibold">{stats.total}</div>
+            <div className="mt-1 text-[11px] text-white/40">Según filtros</div>
+          </div>
+          <div className="rounded-2xl border border-indigo-500/20 bg-white/5 p-4">
+            <div className="text-xs text-white/50">ACTIVAS</div>
+            <div className="mt-1 text-2xl font-semibold">{stats.active}</div>
           </div>
           <div className="rounded-2xl border border-emerald-500/20 bg-white/5 p-4">
             <div className="text-xs text-white/50">PAGADAS</div>
@@ -243,6 +273,10 @@ export default function InstallmentsPage() {
           <div className="rounded-2xl border border-sky-500/20 bg-white/5 p-4">
             <div className="text-xs text-white/50">PENDIENTES</div>
             <div className="mt-1 text-2xl font-semibold">{stats.pending}</div>
+          </div>
+          <div className="rounded-2xl border border-amber-500/20 bg-white/5 p-4">
+            <div className="text-xs text-white/50">PARCIALES</div>
+            <div className="mt-1 text-2xl font-semibold">{stats.partial}</div>
           </div>
           <div className="rounded-2xl border border-red-500/20 bg-white/5 p-4">
             <div className="text-xs text-white/50">VENCIDAS</div>
@@ -261,7 +295,7 @@ export default function InstallmentsPage() {
             <div className="text-sm font-semibold">Filtros</div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 px-5 py-4">
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-4 px-5 py-4">
             <div>
               <div className="mb-2 text-xs text-white/50">BUSCAR</div>
               <input
@@ -281,8 +315,25 @@ export default function InstallmentsPage() {
               >
                 <option value="ALL">Todos</option>
                 <option value="PENDING">Pendiente</option>
+                <option value="PARTIAL">Parcial</option>
                 <option value="PAID">Pagada</option>
                 <option value="OVERDUE">Vencida</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs text-white/50">CONTRATO</div>
+              <select
+                value={contractFilter}
+                onChange={(e) => setContractFilter(e.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
+              >
+                <option value="ALL">Todos</option>
+                {contracts.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.code ?? c._id}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -313,6 +364,7 @@ export default function InstallmentsPage() {
                   setStatus("ALL");
                   setPeriodFrom("");
                   setPeriodTo("");
+                  setContractFilter("ALL");
                 }}
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
               >
@@ -345,6 +397,7 @@ export default function InstallmentsPage() {
                     <th className="px-4 py-3">Monto</th>
                     <th className="px-4 py-3">Contrato</th>
                     <th className="px-4 py-3">Pago</th>
+                    <th className="px-4 py-3">Saldo</th>
                     <th className="px-4 py-3 text-right">Acciones</th>
                   </tr>
                 </thead>
@@ -352,13 +405,13 @@ export default function InstallmentsPage() {
                 <tbody className="divide-y divide-white/5">
                   {loading ? (
                     <tr>
-                      <td className="px-4 py-6 text-white/60" colSpan={7}>
+                      <td className="px-4 py-6 text-white/60" colSpan={8}>
                         Cargando...
                       </td>
                     </tr>
                   ) : filtered.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-6 text-white/60" colSpan={7}>
+                      <td className="px-4 py-6 text-white/60" colSpan={8}>
                         No hay alquiler mensual.
                       </td>
                     </tr>
@@ -371,10 +424,18 @@ export default function InstallmentsPage() {
                           ? "border-emerald-500/30 text-emerald-200 bg-emerald-500/10"
                           : row.status === "OVERDUE"
                           ? "border-red-500/30 text-red-200 bg-red-500/10"
+                          : row.status === "PARTIAL"
+                          ? "border-amber-500/30 text-amber-200 bg-amber-500/10"
                           : "border-sky-500/30 text-sky-200 bg-sky-500/10";
 
                       const statusLabel =
-                        row.status === "PAID" ? "PAGADA" : row.status === "OVERDUE" ? "VENCIDA" : "PENDIENTE";
+                        row.status === "PAID"
+                          ? "PAGADA"
+                          : row.status === "OVERDUE"
+                          ? "VENCIDA"
+                          : row.status === "PARTIAL"
+                          ? "PARCIAL"
+                          : "PENDIENTE";
 
                       const lastPayment = payments
                         .filter((p) => p.installmentId === row._id)
@@ -399,21 +460,28 @@ export default function InstallmentsPage() {
                           <td className="px-4 py-3 text-white/80">{formatDate(row.dueDate)}</td>
                           <td className="px-4 py-3 text-white/80">{formatMoneyARS(row.amount)}</td>
 
-                          <td className="px-4 py-3 text-white/60">
-                            <span className="font-mono">{row.contractId.slice(0, 10)}...</span>
+                          <td className="px-4 py-3 text-white/80">
+                            {contractCodeById[row.contractId] ?? row.contractId}
                           </td>
 
                           <td className="px-4 py-3 text-white/70">
-                            {row.status === "PAID" && lastPayment ? (
-                              <div className="text-xs">
+                            {lastPayment ? (
+                              <div className="text-xs space-y-0.5">
                                 <div className="text-white/80">{formatMoneyARS(lastPayment.amount)}</div>
                                 <div className="text-white/50">
-                                  {METHOD_LABEL[lastPayment.method]} — {lastPayment.reference || "-"}
+                                  {METHOD_LABEL[lastPayment.method]}
+                                  {lastPayment.reference ? ` — ${lastPayment.reference}` : ""}
                                 </div>
                               </div>
                             ) : (
                               <span className="text-white/40">-</span>
                             )}
+                          </td>
+
+                          <td className="px-4 py-3 text-white/70">
+                            {row.status !== "PAID"
+                              ? formatMoneyARS(Math.max(0, row.amount - (row.paidAmount || 0)))
+                              : "—"}
                           </td>
 
                           <td className="px-4 py-3 text-right">
@@ -441,9 +509,6 @@ export default function InstallmentsPage() {
               </table>
             </div>
 
-            <div className="mt-3 text-xs text-white/40">
-              Tip: desde Pagos podés entrar directo con <span className="font-mono">?focus=...</span>
-            </div>
           </div>
         </div>
       </div>

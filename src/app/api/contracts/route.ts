@@ -170,7 +170,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: "actualizacionCadaMeses invalid" }, { status: 400 });
     }
 
-    const currency = (raw.currency ? String(raw.currency).trim() : "ARS") || "ARS";
+  const currency = (raw.currency ? String(raw.currency).trim() : "ARS") || "ARS";
+    const billingInput = (raw as { billing?: { notes?: unknown; lateFeePolicy?: { type?: unknown; value?: unknown } } })
+      .billing;
+    const notesRaw = billingInput?.notes;
+  const notes = notesRaw !== undefined && notesRaw !== null ? String(notesRaw).trim() : "";
+    const lateFeeType = billingInput?.lateFeePolicy?.type;
+    const lateFeeValue = billingInput?.lateFeePolicy?.value;
+    const lateFeePolicy = {
+      type:
+        lateFeeType === "FIXED" || lateFeeType === "PERCENT" || lateFeeType === "NONE"
+          ? lateFeeType
+          : "NONE",
+      value: Number.isFinite(Number(lateFeeValue)) ? Number(lateFeeValue) : 0,
+    } as { type: "NONE" | "FIXED" | "PERCENT"; value: number };
 
     // Ajustes manuales (nuevo) o compat (viejo)
     let ajustes: BillingAdjustmentInput[] = Array.isArray(raw.ajustes) ? raw.ajustes : [];
@@ -259,8 +272,8 @@ export async function POST(req: Request) {
         currency,
         actualizacionCadaMeses,
         ajustes,
-        lateFeePolicy: { type: "NONE", value: 0 },
-        notes: "",
+  lateFeePolicy,
+        notes: notes || "Sin notas",
       },
       documents: [],
     });

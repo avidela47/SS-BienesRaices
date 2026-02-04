@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
 import { useToast } from "@/components/ToastProvider";
 
 type TenantDTO = {
@@ -339,21 +339,12 @@ export default function GuarantorsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Volver */}
-            <Link
-              href="/"
-              title="Volver"
-              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg"
-            >
-              ←
-            </Link>
-
-            {/* Nuevo (solo ícono) */}
+            <BackButton />
             <button
               onClick={() => setOpenNew(true)}
               title="Nuevo garante"
               aria-label="Nuevo garante"
-              className="flex items-center justify-center w-10 h-10 cursor-pointer rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
               style={{ color: "var(--benetton-green)" }}
             >
               +
@@ -361,43 +352,52 @@ export default function GuarantorsPage() {
           </div>
         </div>
 
-        <div
-          className="mt-5 rounded-2xl border p-4"
-          style={{ borderColor: "rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.02)" }}
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar por nombre, código, DNI/CUIT, WhatsApp, dirección o inquilino…"
-              className="w-full rounded-xl border px-3 py-2 text-sm outline-none"
-              style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-            />
-
-            <button
-              onClick={() => void loadAll()}
-              className="rounded-xl border px-4 py-2 text-sm hover:opacity-90"
-              style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)" }}
-            >
-              Recargar
-            </button>
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5">
+          <div className="border-b border-white/10 px-5 py-4">
+            <div className="text-sm font-semibold">Filtros</div>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-2xl border" style={{ borderColor: "rgba(255,255,255,0.10)" }}>
-            <div
-              className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide opacity-70"
-              style={{ background: "rgba(255,255,255,0.03)" }}
-            >
-              <div className="col-span-2">Código</div>
-              <div className="col-span-3">Nombre</div>
-              <div className="col-span-2">DNI/CUIT</div>
-              <div className="col-span-2">WhatsApp</div>
-              <div className="col-span-1">Dirección</div>
-              <div className="col-span-1">Inquilino</div>
-              <div className="col-span-1 text-right">Acc.</div>
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-4 px-5 py-4">
+            <div className="sm:col-span-4">
+              <div className="mb-2 text-xs text-white/50">BUSCAR</div>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar por nombre, código, DNI/CUIT, WhatsApp, dirección o inquilino…"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
+              />
             </div>
 
-            <div style={{ background: "rgba(0,0,0,0.15)" }}>
+            <div className="sm:col-span-2 flex items-end justify-end gap-2">
+              <button
+                onClick={() => setQuery("")}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
+              >
+                Limpiar
+              </button>
+              <button
+                onClick={() => void loadAll()}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+                disabled={loading}
+              >
+                Refrescar
+              </button>
+            </div>
+          </div>
+
+          <div className="px-4 pb-4">
+            <div className="overflow-hidden rounded-2xl border border-white/10">
+              <div className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide text-neutral-300 bg-white/5">
+                <div className="col-span-2">Código</div>
+                <div className="col-span-3">Nombre</div>
+                <div className="col-span-2">DNI/CUIT</div>
+                <div className="col-span-2">WhatsApp</div>
+                <div className="col-span-1">Dirección</div>
+                <div className="col-span-1">Inquilino</div>
+                <div className="col-span-1 text-right">Acc.</div>
+              </div>
+
+              <div>
               {loading ? (
                 <div className="px-4 py-6 text-sm opacity-70">Cargando…</div>
               ) : filtered.length === 0 ? (
@@ -411,8 +411,7 @@ export default function GuarantorsPage() {
                   return (
                     <div
                       key={p._id}
-                      className="grid grid-cols-12 px-4 py-3 text-sm border-t items-start"
-                      style={{ borderColor: "rgba(255,255,255,0.06)" }}
+                      className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start"
                     >
                       <div className="col-span-2 font-semibold">{p.code || "—"}</div>
                       <div className="col-span-3">{p.fullName}</div>
@@ -430,16 +429,16 @@ export default function GuarantorsPage() {
                       <div className="col-span-1 text-right">
                         <button
                           onClick={() => openEditModal(p)}
-                          className="rounded-lg border border-white/10 px-2 py-1 text-xs hover:opacity-90"
-                          style={{ background: "rgba(255,255,255,0.03)" }}
+                          className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition"
                         >
-                          Editar
+                          Ver
                         </button>
                       </div>
                     </div>
                   );
                 })
               )}
+              </div>
             </div>
           </div>
         </div>

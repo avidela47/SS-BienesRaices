@@ -155,12 +155,17 @@ export default function HomePage() {
       }}
     >
       {/* Header compacto */}
-      <header className="mx-auto w-full max-w-6xl px-5 pt-4 pb-2 flex items-center justify-between gap-4 flex-none">
-        <div className="flex items-center gap-3 min-w-0">
-          <Image src="/logo.png" alt="Logo" width={36} height={36} className="rounded-xl border border-white/10" />
+  <header className="mx-auto w-full max-w-6xl px-5 pt-2 pb-1 flex items-center justify-center flex-none">
+        <div className="flex flex-col items-center text-center gap-2 min-w-0">
+          <Image src="/logo.png" alt="Logo" width={110} height={110} className="rounded-full" />
           <div className="min-w-0 leading-tight">
-            <h1 className="text-lg sm:text-xl font-semibold truncate">S&amp;S Sotgiu &amp; Soteras</h1>
-            <p className="text-xs sm:text-sm font-normal mt-0.5" style={{ color: "var(--benetton-muted)" }}>
+            <h1
+              className="text-2xl sm:text-3xl font-normal"
+              style={{ fontFamily: "'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif" }}
+            >
+              S&amp;S Sotgiu &amp; Soteras
+            </h1>
+            <p className="text-sm sm:text-base font-normal mt-1" style={{ color: "var(--benetton-muted)" }}>
               Negocios Inmobiliarios
             </p>
           </div>

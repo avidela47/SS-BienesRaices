@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import React from "react";
 import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
 
 // Modal simple reutilizable
 function Modal({
@@ -77,7 +78,7 @@ export default function PeoplePage() {
   const [editError, setEditError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
   const [people, setPeople] = useState<PersonDTO[]>([]);
 
@@ -232,68 +233,27 @@ export default function PeoplePage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl w-full px-6 py-8">
-      <div className="flex items-start justify-between gap-6">
-        <div className="flex items-center gap-2">
-          <Link
-            href="/"
-            title="Ir a inicio"
-            className="flex items-center justify-center w-9 h-9 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition text-xl text-neutral-100 shadow-sm"
-          >
-            <span>&#8592;</span>
-          </Link>
-          <h1 className="text-3xl font-semibold">Clientes</h1>
+    <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
+      <div className="mx-auto max-w-6xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold">Clientes</h1>
+            <p className="text-sm opacity-70">Listado y gestión de clientes</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <BackButton />
+            <Link
+              href="/people/new"
+              title="Nuevo cliente"
+              aria-label="Nuevo cliente"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              style={{ color: "var(--benetton-green)" }}
+            >
+              +
+            </Link>
+          </div>
         </div>
-
-        <div className="flex items-center gap-3">
-          <Link
-            href="/contracts"
-            className="rounded-xl border px-4 py-2 text-sm text-white transition shadow hover:brightness-125 hover:border-white"
-            style={{
-              background: "var(--benetton-black)",
-              borderColor: "rgba(255,255,255,0.18)",
-              boxShadow: "0 0 12px 2px #14141A55",
-            }}
-          >
-            Ir a Contratos
-          </Link>
-
-          <button
-            onClick={() => void load()}
-            className="rounded-xl border px-4 py-2 text-sm text-white transition disabled:opacity-50 shadow hover:brightness-125 hover:border-white"
-            style={{
-              background: "var(--benetton-black)",
-              borderColor: "rgba(255,255,255,0.18)",
-              boxShadow: "0 0 12px 2px #14141A55",
-              cursor: "pointer",
-            }}
-            disabled={loading}
-          >
-            {loading ? "Actualizando..." : "Actualizar"}
-          </button>
-
-          <Link
-            href="/people/new"
-            style={{
-              border: "1px solid rgba(16, 185, 129, 0.3)",
-              background: "rgba(16, 185, 129, 0.15)",
-              color: "#6ee7b7",
-              borderRadius: "0.75rem",
-              padding: "0.375rem 0.75rem",
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              boxShadow: "none",
-              textDecoration: "none",
-              cursor: "pointer",
-            }}
-          >
-            +Alta Cliente
-          </Link>
-        </div>
-      </div>
 
       {err ? (
         <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
@@ -301,49 +261,49 @@ export default function PeoplePage() {
         </div>
       ) : null}
 
-      {/* Filtros */}
-      <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">
-          Filtros
-        </div>
+        {/* Filtros */}
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5">
+          <div className="border-b border-white/10 px-5 py-4">
+            <div className="text-sm font-semibold">Filtros</div>
+          </div>
 
-        <div className="p-4 grid grid-cols-3 gap-4">
-          <div className="col-span-2">
-            <div className="text-xs text-neutral-400 mb-1">
-              BÚSQUEDA (nombre, código, email, etc.)
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-4 px-5 py-4">
+            <div className="sm:col-span-4">
+              <div className="mb-2 text-xs text-white/50">
+                BÚSQUEDA (nombre, código, email, etc.)
+              </div>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Ej: PID-001, Juan Pérez, demo@correo.com..."
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
+              />
             </div>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Ej: PID-001, Juan Pérez, demo@correo.com..."
-              className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
-            />
-          </div>
 
-          <div>
-            <div className="text-xs text-neutral-400 mb-1">TIPO</div>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as TypeFilter)}
-              className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
-            >
-              <option value="ALL">Todos</option>
-              <option value="OWNER">Propietario</option>
-              <option value="TENANT">Inquilino</option>
-            </select>
+            <div className="sm:col-span-2">
+              <div className="mb-2 text-xs text-white/50">TIPO</div>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value as TypeFilter)}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
+              >
+                <option value="ALL">Todos</option>
+                <option value="OWNER">Propietario</option>
+                <option value="TENANT">Inquilino</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Tabla */}
-      <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">
-          Clientes ({filtered.length})
-        </div>
+        {/* Tabla */}
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10 text-sm font-semibold">
+            Clientes ({filtered.length})
+          </div>
 
-        <div className="p-4">
-          <div className="rounded-xl border border-white/10 overflow-hidden">
-            <div className="grid grid-cols-7 gap-0 bg-white/5 text-xs text-neutral-300 px-4 py-3">
+          <div className="p-4">
+            <div className="rounded-xl border border-white/10 overflow-hidden">
+              <div className="grid grid-cols-7 gap-0 bg-white/5 text-xs text-neutral-300 px-4 py-3">
               <div className="col-span-2">Nombre</div>
               <div className="col-span-1">Código</div>
               <div className="col-span-1">Tipo</div>
@@ -411,32 +371,32 @@ export default function PeoplePage() {
               })
             )}
 
-            {totalPages > 1 && (
-              <div className="flex justify-center items-center gap-2 py-4">
-                <button
-                  className="px-3 py-1 rounded bg-white/10 border border-white/10 text-xs text-white disabled:opacity-40"
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                >
-                  Anterior
-                </button>
-                <span className="text-xs text-neutral-300">
-                  Página {currentPage} de {totalPages}
-                </span>
-                <button
-                  className="px-3 py-1 rounded bg-white/10 border border-white/10 text-xs text-white disabled:opacity-40"
-                  onClick={() =>
-                    setCurrentPage((p) => Math.min(totalPages, p + 1))
-                  }
-                  disabled={currentPage === totalPages}
-                >
-                  Siguiente
-                </button>
-              </div>
-            )}
+              {totalPages > 1 && (
+                <div className="flex justify-center items-center gap-2 py-4">
+                  <button
+                    className="px-3 py-1 rounded bg-white/10 border border-white/10 text-xs text-white disabled:opacity-40"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    Anterior
+                  </button>
+                  <span className="text-xs text-neutral-300">
+                    Página {currentPage} de {totalPages}
+                  </span>
+                  <button
+                    className="px-3 py-1 rounded bg-white/10 border border-white/10 text-xs text-white disabled:opacity-40"
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    disabled={currentPage === totalPages}
+                  >
+                    Siguiente
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Modal de edición/eliminación */}
       <Modal open={!!editClient} onClose={handleCloseEdit}>
@@ -575,6 +535,7 @@ export default function PeoplePage() {
           </>
         )}
       </Modal>
-    </div>
+      </div>
+    </main>
   );
 }

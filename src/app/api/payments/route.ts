@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbConnect } from "@/lib/mongoose";
-import { Payment } from "@/models/Payment";
+import Installment from "@/models/Installment";
+import { Payment, type PaymentMethod } from "@/models/Payment";
 
 const TENANT_ID = "default";
 
@@ -53,6 +54,72 @@ export async function GET(req: NextRequest) {
   } catch (err: unknown) {
     return NextResponse.json(
       { ok: false, error: `Failed to fetch payments: ${getErrorMessage(err)}` },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await dbConnect();
+
+    const body: unknown = await req.json();
+    const data = body as Partial<{
+      installmentId: string;
+      amount: number;
+      method: PaymentMethod;
+      reference?: string;
+      notes?: string;
+      date?: string; // ISO opcional
+    }>;
+
+    if (!data.installmentId) {
+      return NextResponse.json({ ok: false, error: "installmentId required" }, { status: 400 });
+    }
+    if (typeof data.amount !== "number" || data.amount <= 0) {
+      return NextResponse.json({ ok: false, error: "amount must be > 0" }, { status: 400 });
+    }
+    if (!data.method) {
+      return NextResponse.json({ ok: false, error: "method required" }, { status: 400 });
+    }
+
+    const installment = await Installment.findOne({ _id: data.installmentId, tenantId: TENANT_ID });
+    if (!installment) {
+      return NextResponse.json({ ok: false, error: "installment not found" }, { status: 400 });
+    }
+
+    const paymentDate = data.date ? new Date(data.date) : new Date();
+
+    const payment = await Payment.create({
+      tenantId: TENANT_ID,
+      contractId: installment.contractId,
+      installmentId: installment._id,
+      date: paymentDate,
+      amount: data.amount,
+      method: data.method,
+      reference: data.reference || "",
+      notes: data.notes || "",
+      createdBy: "system",
+    });
+
+    const newPaid = (installment.paidAmount || 0) + data.amount;
+
+    if (newPaid >= installment.amount) {
+      installment.paidAmount = installment.amount;
+      installment.status = "PAID";
+      installment.paidAt = paymentDate;
+    } else {
+      installment.paidAmount = newPaid;
+      installment.status = "PARTIAL";
+      installment.paidAt = null;
+    }
+
+    await installment.save();
+
+    return NextResponse.json({ ok: true, payment, installment });
+  } catch (err: unknown) {
+    return NextResponse.json(
+      { ok: false, error: `Failed to create payment: ${getErrorMessage(err)}` },
       { status: 500 }
     );
   }

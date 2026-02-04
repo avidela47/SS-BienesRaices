@@ -8,7 +8,7 @@ export type PropertyStatus = "AVAILABLE" | "OCCUPIED" | "INACTIVE";
 
 export type ContractStatus = "ACTIVE" | "INACTIVE" | "CANCELLED" | "FINISHED";
 
-export type InstallmentStatus = "PENDING" | "PAID" | "OVERDUE";
+export type InstallmentStatus = "PENDING" | "PAID" | "OVERDUE" | "PARTIAL" | "REFINANCED";
 
 export type CurrencyCode = "ARS" | "USD";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
 
 export default function DashboardPage() {
   return (
@@ -14,13 +14,7 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <Link
-            href="/"
-            className="rounded-xl border px-4 py-2 text-sm hover:opacity-90"
-            style={{ borderColor: "var(--benetton-border)", background: "rgba(255,255,255,0.03)" }}
-          >
-            ← Volver
-          </Link>
+          <BackButton />
         </div>
 
         <div className="mt-6 rounded-2xl border p-6" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>

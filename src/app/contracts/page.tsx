@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import BackButton from "@/app/components/BackButton";
+import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/app/components/ToastProvider";
 
 type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
@@ -22,15 +23,12 @@ type PropertyDTO = {
   unit?: string;
   city?: string;
   province?: string;
-  status?: string;
-  ownerId?: PersonDTO | string;
-  inquilinoId?: PersonDTO | string | null;
 };
 
 type ContractDTO = {
   _id: string;
-  tenantId: string;
   code: string;
+  status: ContractStatus;
 
   propertyId: PropertyDTO | string;
   ownerId: PersonDTO | string;
@@ -38,17 +36,24 @@ type ContractDTO = {
 
   startDate: string;
   endDate: string;
-  status: ContractStatus;
 
-  billing: {
-    dueDay: number;
-    baseRent: number;
-    currency: string;
-    lateFeePolicy: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
-    notes: string;
-    actualizacionCada?: number;
-    porcentajeActualizacion?: number;
+  billing?: {
+    baseRent?: number;
+    currency?: string;
+    dueDay?: number;
+    actualizacionCadaMeses?: number;
+    ajustes?: { n: number; percentage: number }[];
+    lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
   };
+
+  montoBase?: number;
+
+  duracion?: number;
+  valorCuota?: number;
+  diaVencimiento?: number;
+  actualizacionCadaMeses?: number;
+  ajustes?: { n: number; percentage: number }[];
+  lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
 
   createdAt: string;
   updatedAt: string;
@@ -60,18 +65,19 @@ type ContractsListResponse =
 
 type StatusFilter = "ALL" | ContractStatus;
 
-type InstallmentSim = {
-  periodo: string;
-  vencimiento: string;
-  monto: number;
-  estado: string;
-  pagado: boolean;
-  pago: string;
-};
+type InstallmentStatus = "PENDING" | "PAID" | "OVERDUE" | "PARTIAL" | "REFINANCED";
 
-function formatARS(n: number) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
-}
+type InstallmentDTO = {
+  _id: string;
+  contractId: string;
+  period: string;
+  dueDate: string;
+  amount: number;
+  lateFeeAccrued?: number;
+  status: InstallmentStatus;
+  paidAmount?: number;
+  paidAt?: string | null;
+};
 
 function safeText(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -107,37 +113,112 @@ function statusBadge(status: ContractStatus) {
   }
 }
 
+function formatARS(n: number) {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
+}
+
+type InstallmentSim = {
+  periodo: string;
+  vencimiento: string;
+  monto: number;
+  montoConMora: number;
+  estado: string;
+  pagado: boolean;
+  pago: string;
+};
+
+function installmentStatusLabel(status: InstallmentStatus): string {
+  switch (status) {
+    case "PAID":
+      return "Pagada";
+    case "OVERDUE":
+      return "Vencida";
+    case "PARTIAL":
+      return "Parcial";
+    case "REFINANCED":
+      return "Refinanciada";
+    default:
+      return "Pendiente";
+  }
+}
+
+function moraLabel(type: "NONE" | "FIXED" | "PERCENT"): string {
+  if (type === "FIXED") return "Fija";
+  if (type === "PERCENT") return "Porcentaje";
+  return "Sin interés";
+}
+
 export default function ContractsPage() {
   const toast = useToast();
 
   const [err, setErr] = useState("");
   const [contracts, setContracts] = useState<ContractDTO[]>([]);
 
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("ALL");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  const [viewModal, setViewModal] = useState<{ open: boolean; contrato: ContractDTO | null; cuotas: InstallmentSim[] }>(
+    { open: false, contrato: null, cuotas: [] }
+  );
+  const [viewLoading, setViewLoading] = useState(false);
+
   const [deleteModal, setDeleteModal] = useState<{ open: boolean; contrato: ContractDTO | null }>({
     open: false,
     contrato: null,
   });
 
-  const [cuotasModal, setCuotasModal] = useState<{
-    open: boolean;
-    cuotas: (InstallmentSim & { montoConMora: number })[];
-    contrato: ContractDTO | null;
-  }>({
-    open: false,
-    cuotas: [],
-    contrato: null,
-  });
+  async function load(opts?: { cancelled?: () => boolean }) {
+    setErr("");
+    try {
+      const res = await fetch("/api/contracts", { cache: "no-store" });
+      const data = (await res.json()) as ContractsListResponse;
 
-  function generarCuotasSimuladas(contrato: ContractDTO): (InstallmentSim & { montoConMora: number })[] {
-    const cuotas: (InstallmentSim & { montoConMora: number })[] = [];
-    const duracion = 0; // (si querés simular acá, necesitamos duracionMeses real en el DTO de lista)
-    const baseRent = contrato.billing?.baseRent || 0;
-    const lateFeeType = contrato.billing?.lateFeePolicy?.type;
-    const lateFeeValue = Number(contrato.billing?.lateFeePolicy?.value) || 0;
+      if (opts?.cancelled?.()) return;
+
+      if (!data.ok) {
+        setContracts([]);
+        const msg =
+          "error" in data && data.error
+            ? data.error
+            : "message" in data && data.message
+              ? data.message
+              : "Error";
+        setErr(msg);
+        return;
+      }
+
+      setContracts(data.contracts ?? []);
+    } catch (e) {
+      console.error(e);
+      if (opts?.cancelled?.()) return;
+      setContracts([]);
+      setErr("No se pudo cargar contratos");
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      await load({ cancelled: () => cancelled });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+
+  function generarCuotasSimuladas(contrato: ContractDTO): InstallmentSim[] {
+    const cuotas: InstallmentSim[] = [];
+    const duracion = Number(contrato.duracion) || 0;
+    const baseRent = contrato.valorCuota ?? contrato.billing?.baseRent ?? 0;
     const startDate = contrato.startDate ? new Date(contrato.startDate) : null;
     if (!duracion || !startDate) return [];
 
-      const montoActual = baseRent;
+    const montoActual = Number(baseRent) || 0; // ✅ prefer-const
 
     for (let i = 0; i < duracion; i++) {
       const fechaVenc = new Date(startDate);
@@ -146,21 +227,11 @@ export default function ContractsPage() {
       const periodo = `${fechaVenc.getMonth() + 1}/${fechaVenc.getFullYear()}`;
       const vencimiento = fechaVenc.toISOString().slice(0, 10);
 
-      let montoConMora = montoActual;
-      const hoy = new Date();
-      const fechaVencSinHora = new Date(fechaVenc.getFullYear(), fechaVenc.getMonth(), fechaVenc.getDate());
-
-      if (lateFeeType === "PERCENT" && lateFeeValue > 0 && hoy > fechaVencSinHora) {
-        const diffMs = hoy.getTime() - fechaVencSinHora.getTime();
-        const diasAtraso = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        montoConMora = montoActual * Math.pow(1 + lateFeeValue / 100, diasAtraso);
-      }
-
       cuotas.push({
         periodo,
         vencimiento,
         monto: montoActual,
-        montoConMora,
+        montoConMora: montoActual,
         estado: "Pendiente",
         pagado: false,
         pago: "-",
@@ -169,36 +240,41 @@ export default function ContractsPage() {
     return cuotas;
   }
 
-  async function load() {
-    setErr("");
-    try {
-      const res = await fetch("/api/contracts", { cache: "no-store" });
-      const data = (await res.json()) as ContractsListResponse;
+  async function openViewModal(contrato: ContractDTO) {
+    setViewModal({ open: true, contrato, cuotas: [] });
+    setViewLoading(true);
 
-      if (!data.ok) {
-        setContracts([]);
-        const msg = ("error" in data && data.error) || ("message" in data && data.message) || "Error";
-        setErr(msg);
-        return;
+    try {
+      const res = await fetch("/api/installments", { cache: "no-store" });
+      const data = (await res.json()) as { ok?: boolean; installments?: InstallmentDTO[]; error?: string };
+
+      if (!res.ok || !data.ok || !Array.isArray(data.installments)) {
+        throw new Error(data.error || "No se pudieron cargar cuotas");
       }
 
-      setContracts(data.contracts ?? []);
+      const cuotas = data.installments
+        .filter((i) => i.contractId === contrato._id)
+        .map<InstallmentSim>((i) => {
+          const late = Number(i.lateFeeAccrued || 0);
+          return {
+            periodo: i.period,
+            vencimiento: i.dueDate ? i.dueDate.slice(0, 10) : "-",
+            monto: i.amount,
+            montoConMora: i.amount + late,
+            estado: installmentStatusLabel(i.status),
+            pagado: i.status === "PAID",
+            pago: i.paidAt ? i.paidAt.slice(0, 10) : "-",
+          };
+        });
+
+      setViewModal({ open: true, contrato, cuotas: cuotas.length ? cuotas : generarCuotasSimuladas(contrato) });
     } catch (e) {
-      console.error(e);
-      setContracts([]);
-      setErr("No se pudo cargar contratos");
+      toast.show?.(e instanceof Error ? e.message : "No se pudieron cargar cuotas");
+      setViewModal({ open: true, contrato, cuotas: generarCuotasSimuladas(contrato) });
+    } finally {
+      setViewLoading(false);
     }
   }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, []);
-
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("ALL");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
 
   const filtered = useMemo(() => {
     return contracts.filter((c) => {
@@ -240,36 +316,41 @@ export default function ContractsPage() {
     const activos = filtered.filter((c) => c.status === "ACTIVE").length;
     const total = filtered.length;
     const sumaBase = filtered.reduce(
-      (acc, c) => acc + (Number.isFinite(c.billing?.baseRent) ? c.billing.baseRent : 0),
+      (acc, c) => acc + (Number(c.billing?.baseRent) || Number(c.montoBase) || 0),
       0
     );
     return { total, activos, sumaBase };
   }, [filtered]);
 
   return (
-    <div className="mx-auto max-w-6xl w-full px-6 py-8">
-      <div className="flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-3xl font-semibold flex items-center gap-2">
+    <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
+      <div className="mx-auto max-w-6xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold">Contratos</h1>
+            <p className="text-sm opacity-70">Listado y gestión de contratos</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <BackButton />
             <Link
-              href="/"
-              title="Volver al inicio"
-              className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition text-xl text-neutral-100 shadow-sm mr-1"
+              href="/contracts/new"
+              title="Nuevo contrato"
+              aria-label="Nuevo contrato"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              style={{ color: "var(--benetton-green)" }}
             >
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+              +
             </Link>
-            Contratos
-          </h1>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="mt-4 flex flex-wrap gap-2">
           <Link
             href="/installments"
             className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"
           >
-            Ir a Cuotas
+            Ir a Alquiler mensual
           </Link>
           <Link
             href="/payments"
@@ -277,16 +358,7 @@ export default function ContractsPage() {
           >
             Ir a Pagos
           </Link>
-
-          {/* ✅ ÚNICO botón de alta: siempre va a /contracts/new */}
-          <Link
-            href="/contracts/new"
-            className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 text-sm text-emerald-200 font-semibold shadow hover:brightness-110 transition cursor-pointer"
-          >
-            + Alta Contrato
-          </Link>
         </div>
-      </div>
 
       {err ? (
         <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
@@ -310,24 +382,24 @@ export default function ContractsPage() {
       </div>
 
       <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">Filtros</div>
-        <div className="p-4 grid grid-cols-4 gap-4">
-          <div className="col-span-2">
-            <div className="text-xs text-neutral-400 mb-1">BÚSQUEDA</div>
+        <div className="px-5 py-4 border-b border-white/10 text-sm font-semibold">Filtros</div>
+        <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-6 gap-4">
+          <div className="sm:col-span-3">
+            <div className="text-xs text-white/50 mb-2">BÚSQUEDA</div>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Código, dirección, propietario, inquilino..."
-              className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
             />
           </div>
 
-          <div>
-            <div className="text-xs text-neutral-400 mb-1">ESTADO</div>
+          <div className="sm:col-span-1">
+            <div className="text-xs text-white/50 mb-2">ESTADO</div>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as StatusFilter)}
-              className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
             >
               <option value="ALL">Todos</option>
               <option value="ACTIVE">Activo</option>
@@ -338,23 +410,23 @@ export default function ContractsPage() {
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="sm:col-span-2 grid grid-cols-2 gap-4">
             <div>
-              <div className="text-xs text-neutral-400 mb-1">DESDE</div>
+              <div className="text-xs text-white/50 mb-2">DESDE</div>
               <input
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
                 placeholder="yyyy-mm-dd"
-                className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
               />
             </div>
             <div>
-              <div className="text-xs text-neutral-400 mb-1">HASTA</div>
+              <div className="text-xs text-white/50 mb-2">HASTA</div>
               <input
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
                 placeholder="yyyy-mm-dd"
-                className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm outline-none focus:border-white/20"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
               />
             </div>
           </div>
@@ -363,16 +435,16 @@ export default function ContractsPage() {
 
       {/* Tabla */}
       <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 text-sm font-semibold">Contratos ({filtered.length})</div>
+        <div className="px-5 py-4 border-b border-white/10 text-sm font-semibold">Contratos ({filtered.length})</div>
 
         <div className="p-4">
           <div className="rounded-xl border border-white/10 overflow-hidden">
             <div className="grid grid-cols-12 gap-0 bg-white/5 text-xs text-neutral-300 px-4 py-3">
               <div className="col-span-1">Estado</div>
               <div className="col-span-2">Código</div>
-              <div className="col-span-4 pr-0!">Propiedad</div>
-              <div className="col-span-2 pl-0!">Propietario</div>
-              <div className="col-span-1">Inquilino</div>
+              <div className="col-span-4">Propiedad</div>
+              <div className="col-span-2 -ml-6">Propietario</div>
+              <div className="col-span-1 -ml-6">Inquilino</div>
               <div className="col-span-2 text-right">Acción</div>
             </div>
 
@@ -398,15 +470,15 @@ export default function ContractsPage() {
                       <div className="text-neutral-200 font-semibold">{c.code}</div>
                     </div>
 
-                    <div className="col-span-4 pr-0!">
+                    <div className="col-span-4">
                       <div className="text-neutral-200">{propLine || "—"}</div>
                     </div>
 
-                    <div className="col-span-2 pl-0!">
+                    <div className="col-span-2 -ml-6">
                       <div className="text-neutral-200">{o?.fullName || "—"}</div>
                     </div>
 
-                    <div className="col-span-1">
+                    <div className="col-span-1 -ml-6">
                       <div className="text-neutral-200">{t?.fullName || "—"}</div>
                     </div>
 
@@ -414,16 +486,18 @@ export default function ContractsPage() {
                       <button
                         className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition whitespace-nowrap"
                         title="Ver"
-                        onClick={() => {
-                          setCuotasModal({
-                            open: true,
-                            cuotas: generarCuotasSimuladas(c),
-                            contrato: c,
-                          });
-                        }}
+                        onClick={() => void openViewModal(c)}
                       >
                         Ver
                       </button>
+
+                      <Link
+                        href={`/contracts/new?id=${c._id}`}
+                        className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 transition whitespace-nowrap"
+                        title="Editar"
+                      >
+                        Editar
+                      </Link>
 
                       <button
                         className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/20 transition whitespace-nowrap"
@@ -442,64 +516,129 @@ export default function ContractsPage() {
       </div>
 
       {/* Modal VER */}
-      {cuotasModal.open && cuotasModal.contrato ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div
-            className="mx-auto rounded-2xl border border-white/10 bg-neutral-900 shadow-2xl py-6 px-8 relative flex flex-col items-center"
-            style={{ maxWidth: 520, minWidth: 0 }}
-          >
+      {viewModal.open && viewModal.contrato ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="mx-auto rounded-2xl border border-white/10 bg-neutral-900 shadow-2xl py-6 px-8 relative w-full max-w-5xl max-h-[85vh] overflow-y-auto">
             <button
-              className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-red-500 transition text-white shadow cursor-pointer border border-white/10"
+              className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 transition text-white border border-white/10"
               type="button"
               aria-label="Cerrar"
-              onClick={() => setCuotasModal({ open: false, cuotas: [], contrato: null })}
+              onClick={() => setViewModal({ open: false, contrato: null, cuotas: [] })}
               title="Cerrar"
             >
               ✕
             </button>
 
-            <h2 className="text-xl font-bold text-emerald-400 mb-4">Contrato {cuotasModal.contrato.code}</h2>
+            <h2 className="text-xl font-bold text-green-400 mb-4">Contrato {viewModal.contrato.code}</h2>
 
-            <div className="w-full flex flex-col gap-2 text-sm text-neutral-200">
-              <div>
-                <span className="font-semibold text-neutral-400">Estado:</span> {statusBadge(cuotasModal.contrato.status).label}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-neutral-200 space-y-2">
+                <div>
+                  <span className="font-semibold text-neutral-400">Estado:</span> {statusBadge(viewModal.contrato.status).label}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Propietario:</span> {getOwner(viewModal.contrato)?.fullName || "—"}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Inquilino:</span> {getTenant(viewModal.contrato)?.fullName || "—"}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Inicio:</span> {viewModal.contrato.startDate?.slice(0, 10) || "-"}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Fin:</span> {viewModal.contrato.endDate?.slice(0, 10) || "-"}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Base:</span>{" "}
+                  {formatARS(
+                    viewModal.contrato.valorCuota ??
+                      viewModal.contrato.billing?.baseRent ??
+                      viewModal.contrato.montoBase ??
+                      0
+                  )}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Actualización:</span>{" "}
+                  {(() => {
+                    const cada =
+                      viewModal.contrato.actualizacionCadaMeses ??
+                      viewModal.contrato.billing?.actualizacionCadaMeses ??
+                      0;
+                    const hasAdjustments =
+                      (viewModal.contrato.ajustes?.length ?? 0) > 0 ||
+                      (viewModal.contrato.billing?.ajustes?.length ?? 0) > 0;
+                    return hasAdjustments ? `${cada} meses` : "Sin";
+                  })()}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">% actualización:</span>{" "}
+                  {viewModal.contrato.ajustes?.[0]?.percentage ??
+                  viewModal.contrato.billing?.ajustes?.[0]?.percentage ??
+                  0}
+                  %
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Mora:</span>{" "}
+                  {(() => {
+                    const type =
+                      viewModal.contrato.lateFeePolicy?.type ??
+                      viewModal.contrato.billing?.lateFeePolicy?.type ??
+                      "NONE";
+                    return moraLabel(type);
+                  })()}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Valor mora:</span>{" "}
+                  {(() => {
+                    const type =
+                      viewModal.contrato.lateFeePolicy?.type ??
+                      viewModal.contrato.billing?.lateFeePolicy?.type ??
+                      "NONE";
+                    const value =
+                      viewModal.contrato.lateFeePolicy?.value ??
+                      viewModal.contrato.billing?.lateFeePolicy?.value ??
+                      0;
+                    if (type === "PERCENT") return `${value}%`;
+                    if (type === "FIXED") return formatARS(value);
+                    return "—";
+                  })()}
+                </div>
+                <div className="pt-2">
+                  <Link
+                    href="/documentation"
+                    className="inline-flex items-center rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition"
+                  >
+                    Ir a documentación
+                  </Link>
+                </div>
               </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Propiedad:</span>{" "}
-                {(() => {
-                  const pp = getProperty(cuotasModal.contrato);
-                  return pp ? `${pp.code} - ${pp.addressLine}${pp.unit ? ` (${pp.unit})` : ""}` : safeText(cuotasModal.contrato.propertyId);
-                })()}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Titular:</span>{" "}
-                {(() => {
-                  const oo = getOwner(cuotasModal.contrato);
-                  return oo ? `${oo.fullName}${oo.code ? ` (${oo.code})` : ""}` : "—";
-                })()}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Inquilino:</span>{" "}
-                {(() => {
-                  const tt = getTenant(cuotasModal.contrato);
-                  return tt ? `${tt.fullName}${tt.code ? ` (${tt.code})` : ""}` : "—";
-                })()}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Fecha inicio:</span>{" "}
-                {cuotasModal.contrato.startDate ? cuotasModal.contrato.startDate.slice(0, 10) : "-"}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Fecha fin:</span>{" "}
-                {cuotasModal.contrato.endDate ? cuotasModal.contrato.endDate.slice(0, 10) : "-"}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Valor alquiler:</span>{" "}
-                {formatARS(cuotasModal.contrato.billing?.baseRent ?? 0)}
-              </div>
-              <div>
-                <span className="font-semibold text-neutral-400">Día vencimiento:</span>{" "}
-                {cuotasModal.contrato.billing?.dueDay ?? "-"}
+
+              <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                <div className="px-3 py-2 text-xs text-neutral-300 border-b border-white/10">Alquiler a pagar</div>
+                {viewLoading ? (
+                  <div className="px-3 py-4 text-sm text-neutral-400">Cargando cuotas...</div>
+                ) : viewModal.cuotas.length === 0 ? (
+                  <div className="px-3 py-4 text-sm text-neutral-400">Sin cuotas disponibles.</div>
+                ) : (
+                  <div className="max-h-[55vh] overflow-y-auto">
+                    <div className="grid grid-cols-4 gap-2 px-3 py-2 text-[11px] uppercase tracking-wide text-neutral-400 bg-white/5 sticky top-0">
+                      <div>Periodo</div>
+                      <div>Vence</div>
+                      <div>Importe</div>
+                      <div>Estado</div>
+                    </div>
+                    <div className="divide-y divide-white/10">
+                      {viewModal.cuotas.map((c, idx) => (
+                        <div key={`${c.periodo}-${idx}`} className="grid grid-cols-4 gap-2 px-3 py-2 text-xs text-neutral-200">
+                          <div>{c.periodo}</div>
+                          <div>{c.vencimiento}</div>
+                          <div>{formatARS(c.montoConMora)}</div>
+                          <div>{c.estado}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -509,14 +648,10 @@ export default function ContractsPage() {
       {/* Modal BORRAR */}
       {deleteModal.open && deleteModal.contrato ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div
-            className="mx-auto rounded-2xl border border-red-500/30 bg-neutral-900 shadow-2xl py-6 px-6 relative flex flex-col items-center"
-            style={{ maxWidth: 420 }}
-          >
+          <div className="mx-auto rounded-2xl border border-red-500/30 bg-neutral-900 shadow-2xl py-6 px-6 relative flex flex-col items-center w-full max-w-md">
             <h2 className="text-xl font-bold text-red-400 mb-4">¿Eliminar contrato?</h2>
             <div className="text-neutral-200 mb-4 text-center">
-              Se eliminará el contrato{" "}
-              <span className="font-bold text-red-300">{deleteModal.contrato.code}</span>.
+              Se eliminará el contrato <span className="font-bold text-red-300">{deleteModal.contrato.code}</span>.
               <br />
               Esta acción no se puede deshacer.
             </div>
@@ -524,20 +659,19 @@ export default function ContractsPage() {
               <button
                 className="rounded-xl px-5 py-2 text-white font-semibold shadow bg-red-600 hover:brightness-110 text-base"
                 onClick={async () => {
-                  if (toast.show) toast.show(`Eliminando contrato ${deleteModal.contrato?.code}...`);
                   try {
                     const res = await fetch(`/api/contracts/${String(deleteModal.contrato?._id)}`, { method: "DELETE" });
                     const data = (await res.json()) as { ok?: boolean; message?: string };
                     if (!data.ok) {
-                      if (toast.show) toast.show(data.message || "No se pudo eliminar el contrato");
+                      toast.show?.(data.message || "No se pudo eliminar el contrato");
                       setDeleteModal({ open: false, contrato: null });
                       return;
                     }
-                    if (toast.show) toast.show("Contrato eliminado correctamente");
+                    toast.show?.("Contrato eliminado correctamente");
                     setDeleteModal({ open: false, contrato: null });
                     await load();
                   } catch {
-                    if (toast.show) toast.show("Error eliminando contrato");
+                    toast.show?.("Error eliminando contrato");
                     setDeleteModal({ open: false, contrato: null });
                   }
                 }}
@@ -554,6 +688,7 @@ export default function ContractsPage() {
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </main>
   );
 }

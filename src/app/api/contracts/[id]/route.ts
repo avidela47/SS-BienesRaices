@@ -22,6 +22,32 @@ function addMonthsSafe(date: Date, months: number): Date {
   return d;
 }
 
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function computeLateFee(amount: number, dueDate: Date, policy?: { type?: string; value?: number }, status?: string): number {
+  if (!policy || policy.type === "NONE") return 0;
+  if (status === "PAID") return 0;
+
+  const due = startOfDay(dueDate);
+  const today = startOfDay(new Date());
+
+  if (today <= due) return 0;
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysLate = Math.max(0, Math.floor((today.getTime() - due.getTime()) / msPerDay));
+  if (!daysLate) return 0;
+
+  if (policy.type === "FIXED") return Math.round((Number(policy.value) || 0) * daysLate);
+  if (policy.type === "PERCENT") {
+    const pct = Number(policy.value) || 0;
+    return Math.round(amount * (pct / 100) * daysLate);
+  }
+
+  return 0;
+}
+
 async function syncContractStates(): Promise<void> {
   const now = new Date();
   const nowPlus3 = addMonthsSafe(now, 3);
@@ -127,6 +153,12 @@ export async function GET(
       .sort({ dueDate: 1 })
       .lean();
 
+    const lateFeePolicy = contract?.billing?.lateFeePolicy ?? { type: "NONE", value: 0 };
+    const installmentsWithLateFee = installments.map((it) => ({
+      ...it,
+      lateFeeAccrued: computeLateFee(Number(it.amount) || 0, new Date(it.dueDate), lateFeePolicy, it.status),
+    }));
+
     const payments = await Payment.find({
       tenantId: TENANT_ID,
       contractId: id,
@@ -169,7 +201,7 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       contract,
-      installments,
+  installments: installmentsWithLateFee,
       payments,
       totals: mappedTotals,
     });
@@ -182,31 +214,87 @@ export async function GET(
 }
 
 // PUT y DELETE los dejo como estaban (sin tocar lógica ahora)
-export async function PUT(req: NextRequest, ctx: { params: { id: string } }) {
+export async function PUT(
+  req: NextRequest,
+  ctx: { params: { id: string } } | { params: Promise<{ id: string }> }
+) {
   try {
     await dbConnect();
-    const { id } = ctx.params;
-    const body = await req.json();
+    let id: string;
+    function isPromise<T>(v: unknown): v is Promise<T> {
+      return typeof v === "object" && v !== null && "then" in v && typeof (v as { then: unknown }).then === "function";
+    }
+    if (isPromise<{ id: string }>(ctx.params)) {
+      const resolved = await ctx.params;
+      id = resolved.id;
+    } else {
+      id = (ctx.params as { id: string }).id;
+    }
+
+    const body = (await req.json()) as Partial<{
+      propertyId: string;
+      ownerId: string;
+      tenantPersonId: string;
+      startDate: string;
+      duracionMeses: number;
+      montoBase: number;
+      dueDay: number;
+      currency: string;
+      actualizacionCadaMeses: number;
+      ajustes: Array<{ n: number; percentage: number }>;
+      billing?: { lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number }; notes?: string };
+    }>;
+
+    const duracionMeses = Number(body.duracionMeses ?? 0);
+    const montoBase = Number(body.montoBase ?? 0);
+    const dueDay = Number(body.dueDay ?? 0);
+
+    if (!body.propertyId || !body.ownerId || !body.tenantPersonId || !body.startDate) {
+      return NextResponse.json({ ok: false, message: "Faltan campos obligatorios" }, { status: 400 });
+    }
+    if (!duracionMeses || duracionMeses < 1) {
+      return NextResponse.json({ ok: false, message: "duracionMeses inválido" }, { status: 400 });
+    }
+    if (Number.isNaN(montoBase) || montoBase < 0) {
+      return NextResponse.json({ ok: false, message: "montoBase inválido" }, { status: 400 });
+    }
+    if (Number.isNaN(dueDay) || dueDay < 1 || dueDay > 28) {
+      return NextResponse.json({ ok: false, message: "dueDay inválido" }, { status: 400 });
+    }
+
+    const startDate = new Date(body.startDate);
+    if (Number.isNaN(startDate.getTime())) {
+      return NextResponse.json({ ok: false, message: "startDate inválido" }, { status: 400 });
+    }
+
+    const endDate = addMonthsSafe(startDate, duracionMeses);
+    const currency = (body.currency ? String(body.currency).trim() : "ARS") || "ARS";
+    const actualizacionCadaMeses = Number(body.actualizacionCadaMeses ?? 0);
+    const notes = body.billing?.notes ? String(body.billing.notes).trim() : "";
 
     const contract = await Contract.findOneAndUpdate(
       { tenantId: TENANT_ID, _id: id },
       {
-        ...body,
+        propertyId: new Types.ObjectId(body.propertyId),
+        ownerId: new Types.ObjectId(body.ownerId),
+        tenantPersonId: new Types.ObjectId(body.tenantPersonId),
+        startDate,
+        endDate,
+        duracionMeses,
+        montoBase: Math.round(montoBase),
+        duracion: duracionMeses,
+        valorCuota: Math.round(montoBase),
+        diaVencimiento: Math.round(dueDay),
+        actualizacionCada: Number.isFinite(actualizacionCadaMeses) ? actualizacionCadaMeses : 0,
         billing: {
-          dueDay: body.diaVencimiento ? Number(body.diaVencimiento) : 1,
-          baseRent: body.valorCuota ? Number(body.valorCuota) : 0,
-          currency: "ARS",
-          actualizacionCada: body.actualizacionCada ? Number(body.actualizacionCada) : 0,
-          porcentajeActualizacion: body.porcentajeActualizacion ? Number(body.porcentajeActualizacion) : 0,
-          lateFeePolicy: { type: "NONE", value: 0 },
-          notes: "",
+          dueDay: Math.round(dueDay),
+          baseRent: Math.round(montoBase),
+          currency,
+          actualizacionCadaMeses: Number.isFinite(actualizacionCadaMeses) ? actualizacionCadaMeses : 0,
+          ajustes: Array.isArray(body.ajustes) ? body.ajustes : [],
+          lateFeePolicy: body.billing?.lateFeePolicy ?? { type: "NONE", value: 0 },
+          notes: notes || "Sin notas",
         },
-        duracion: body.duracion ? Number(body.duracion) : 0,
-        montoCuota: body.montoCuota ? Number(body.montoCuota) : 0,
-        comision: body.comision ? Number(body.comision) : 0,
-        expensas: body.expensas || "no",
-        otrosGastosImporte: body.otrosGastosImporte ? Number(body.otrosGastosImporte) : 0,
-        otrosGastosDesc: body.otrosGastosDesc || "",
       },
       { new: true }
     );
@@ -240,9 +328,23 @@ export async function DELETE(_req: NextRequest, ctx: { params: { id: string } })
 
     const objectId = Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id;
 
-    const contract = await Contract.findOneAndDelete({ _id: objectId });
+    const contract = await Contract.findOneAndDelete({ _id: objectId, tenantId: TENANT_ID });
     if (!contract) {
       return NextResponse.json({ ok: false, message: "Contrato no encontrado" }, { status: 404 });
+    }
+
+    const stillActive = await Contract.exists({
+      tenantId: TENANT_ID,
+      propertyId: contract.propertyId,
+      status: { $in: ["ACTIVE", "EXPIRING"] },
+    });
+
+    if (!stillActive) {
+      await Property.findByIdAndUpdate(contract.propertyId, {
+        status: "AVAILABLE",
+        inquilinoId: null,
+        availableFrom: null,
+      });
     }
 
     return NextResponse.json({ ok: true });

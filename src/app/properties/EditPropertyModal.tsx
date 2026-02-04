@@ -36,7 +36,7 @@ export default function EditPropertyModal({
     foto: property.foto ?? "",
     mapa: property.mapa ?? "",
     inquilino:
-      typeof property.inquilinoId === "object"
+      property.inquilinoId && typeof property.inquilinoId === "object"
         ? property.inquilinoId._id
         : (property.inquilinoId ?? ""),
     // 👇 guardo el status inicial por si estaba en MAINTENANCE
@@ -64,6 +64,20 @@ export default function EditPropertyModal({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  async function readError(res: Response): Promise<string> {
+    try {
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const data = (await res.json()) as { message?: string; error?: string };
+        return data.message || data.error || `HTTP ${res.status} ${res.statusText}`;
+      }
+      const txt = (await res.text()).trim();
+      return txt ? txt : `HTTP ${res.status} ${res.statusText}`;
+    } catch {
+      return `HTTP ${res.status} ${res.statusText}`;
+    }
+  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     const { name, value } = e.target;
@@ -127,7 +141,8 @@ export default function EditPropertyModal({
         onSave((updated?.property as PropertyDTO) ?? property);
         onClose();
       } else {
-        setError("No se pudo actualizar la propiedad");
+        const msg = await readError(res);
+        setError(msg || "No se pudo actualizar la propiedad");
       }
     } catch {
       setError("Error inesperado");
@@ -138,7 +153,7 @@ export default function EditPropertyModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-md mx-auto rounded-2xl border border-white/15 bg-neutral-900 shadow-xl p-8 relative text-white">
+      <div className="w-full max-w-md mx-auto rounded-2xl border border-white/15 bg-neutral-900 shadow-xl p-8 relative text-white max-h-[90vh] overflow-y-auto">
         <button
           className="absolute top-4 right-4 text-neutral-400 hover:text-white text-xl"
           type="button"
@@ -213,7 +228,13 @@ export default function EditPropertyModal({
             <label className="block mb-1 font-medium">Foto</label>
             <input type="file" accept="image/*" onChange={handleFile} className="w-full" />
             {form.foto ? (
-              <Image src={form.foto} alt="Foto propiedad" width={200} height={120} className="mt-2 rounded-lg object-cover border border-white/10" />
+              <Image
+                src={form.foto}
+                alt="Foto propiedad"
+                width={320}
+                height={200}
+                className="mt-2 rounded-lg object-cover border border-white/10 w-full max-h-48"
+              />
             ) : null}
           </div>
 
