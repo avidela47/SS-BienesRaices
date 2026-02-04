@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import connectDB from "@/lib/mongoose";
+import { dbConnect } from "@/lib/mongoose";
 import { Payment } from "@/models/Payment";
-import { Installment } from "@/models/Installment";
+import Installment from "@/models/Installment";
+import { CashMovement } from "@/models/CashMovement";
 
 type VoidBody = {
   reason?: string;
@@ -10,7 +11,7 @@ type VoidBody = {
 
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   try {
-    await connectDB();
+  await dbConnect();
 
     const id = ctx.params.id;
     const body = (await req.json().catch(() => ({}))) as VoidBody;
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     payment.voidReason = (body.reason || "").trim();
     await payment.save();
 
-    // 2) Recalcular la cuota (installment) con pagos OK
+  // 2) Recalcular la cuota (installment) con pagos OK
     const installmentId = payment.installmentId?.toString();
     if (!installmentId) {
       return NextResponse.json({ ok: true, payment, warning: "Pago sin installmentId" }, { status: 200 });
@@ -55,6 +56,19 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     installment.paidAt = isPaid ? okPayments[okPayments.length - 1]?.date ?? new Date() : null;
 
     await installment.save();
+
+    // 3) Anular movimientos de caja asociados
+    await CashMovement.updateMany(
+      { paymentId: payment._id, status: { $ne: "VOID" } },
+      {
+        $set: {
+          status: "VOID",
+          voidedAt: new Date(),
+          voidedBy: (body.voidedBy || "system").trim() || "system",
+          voidReason: (body.reason || "").trim(),
+        },
+      }
+    );
 
     return NextResponse.json({ ok: true, payment, installment });
   } catch (e) {

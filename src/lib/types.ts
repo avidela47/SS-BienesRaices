@@ -26,6 +26,10 @@ export interface PersonDTO {
   address?: string;
   tags?: string[];
   notes?: string;
+
+  transferredAt?: string | null;
+  transferredBy?: string;
+  transferRef?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -62,6 +66,8 @@ export interface ContractBillingDTO {
   baseRent: number;
   currency: CurrencyCode;
   lateFeePolicy?: ContractBillingLateFeePolicyDTO;
+    commissionMonthlyPct?: number; // Comisión mensual (% sobre alquiler)
+    commissionTotalPct?: number;   // Comisión total por contrato (% sobre monto total)
   notes?: string;
 }
 
@@ -113,6 +119,16 @@ export interface InstallmentDTO {
 
 export type PaymentStatus = "OK" | "VOID";
 
+export type CashMovementType = "INCOME" | "EXPENSE" | "COMMISSION" | "RETENTION" | "ADJUSTMENT";
+export type CashMovementStatus =
+  | "PENDING"
+  | "COLLECTED"
+  | "RETAINED"
+  | "READY_TO_TRANSFER"
+  | "TRANSFERRED"
+  | "VOID";
+export type CashMovementPartyType = "AGENCY" | "OWNER" | "TENANT" | "GUARANTOR" | "OTHER";
+
 export interface PaymentDTO {
   _id: string;
   tenantId: TenantId;
@@ -129,6 +145,39 @@ export interface PaymentDTO {
 
   status?: PaymentStatus;
   voidedAt?: string;
+
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CashMovementDTO {
+  _id: string;
+  tenantId: TenantId;
+
+  type: CashMovementType;
+  subtype?: string;
+  status: CashMovementStatus;
+
+  amount: number;
+  currency: CurrencyCode | string;
+  date: string;
+
+  contractId: string;
+  propertyId: string;
+  ownerId: string;
+  tenantPersonId: string;
+
+  contractLabel?: string;
+  propertyLabel?: string;
+
+  partyType?: CashMovementPartyType;
+  partyId?: string;
+
+  installmentId?: string;
+  paymentId?: string;
+
+  notes?: string;
 
   createdBy?: string;
   createdAt?: string;

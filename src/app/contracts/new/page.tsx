@@ -2,7 +2,7 @@
 
 import BackButton from "@/app/components/BackButton";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useToast } from "@/app/components/ToastProvider";
 
 type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
@@ -59,6 +59,8 @@ type ContractDTO = {
     actualizacionCadaMeses?: number;
     porcentajeActualizacion?: number;
     ajustes?: { n: number; percentage: number }[];
+    commissionMonthlyPct: "",
+    commissionTotalPct: "",
   };
 };
 
@@ -108,7 +110,7 @@ function CardSection({
 
 export default function ContractNewPage() {
   const toast = useToast();
-  const router = useRouter();
+  // const router = useRouter(); // Eliminado: no se usa
   const sp = useSearchParams();
   const editId = (sp.get("id") || "").trim();
   const isEdit = Boolean(editId);
@@ -122,7 +124,26 @@ export default function ContractNewPage() {
   const [propiedades, setPropiedades] = useState<PropertyDTO[]>([]);
   const [contratosActivos, setContratosActivos] = useState<ContractDTO[]>([]);
 
-  const blankForm = {
+  type ContractFormState = {
+    propiedadId: string;
+    titular: string;
+    inquilino: string;
+    fechaInicio: string;
+    fechaFin: string;
+    duracion: string;
+    diaVencimiento: string;
+    valorCuota: string;
+    currency: string;
+    actualizacionCada: string;
+    porcentajeActualizacion: string;
+    lateFeeType: string;
+    lateFeeValue: string;
+    notes: string;
+    commissionMonthlyPct: string;
+    commissionTotalPct: string;
+  };
+
+  const blankForm: ContractFormState = {
     propiedadId: "",
     titular: "",
     inquilino: "",
@@ -137,6 +158,8 @@ export default function ContractNewPage() {
     lateFeeType: "NONE",
     lateFeeValue: "",
     notes: "",
+    commissionMonthlyPct: "",
+    commissionTotalPct: "",
   };
 
   const [form, setForm] = useState(blankForm);
@@ -236,6 +259,8 @@ export default function ContractNewPage() {
           lateFeeType: lateType,
           lateFeeValue: String(lateVal || ""),
           notes: String(c.billing?.notes ?? ""),
+          commissionMonthlyPct: typeof c.billing?.commissionMonthlyPct !== "undefined" ? String(c.billing.commissionMonthlyPct) : "",
+          commissionTotalPct: typeof c.billing?.commissionTotalPct !== "undefined" ? String(c.billing.commissionTotalPct) : "",
         });
       }
     } catch (e) {
@@ -308,15 +333,19 @@ export default function ContractNewPage() {
         actualizacionCadaMeses,
         ajustes,
 
-        // opcionales (si tu backend los ignora, no pasa nada)
         billing: {
           lateFeePolicy: {
             type: (form.lateFeeType || "NONE") as "NONE" | "FIXED" | "PERCENT",
             value: form.lateFeeValue ? toNum(form.lateFeeValue) : 0,
           },
           notes: form.notes?.trim() || "Sin notas",
+          commissionMonthlyPct: form.commissionMonthlyPct !== "" && !isNaN(Number(form.commissionMonthlyPct)) ? Number(form.commissionMonthlyPct) : 0,
+          commissionTotalPct: form.commissionTotalPct !== "" && !isNaN(Number(form.commissionTotalPct)) ? Number(form.commissionTotalPct) : 0,
         },
       };
+
+      // Debug: mostrar payload en consola antes de enviar
+      console.debug("[CONTRACT-FRONT] payload:", payload);
 
       const res = await fetch(isEdit ? `/api/contracts/${editId}` : "/api/contracts", {
         method: isEdit ? "PUT" : "POST",
@@ -330,8 +359,8 @@ export default function ContractNewPage() {
         throw new Error(data?.error || data?.message || "No se pudo guardar el contrato");
       }
 
-      toast.show?.(isEdit ? "Contrato actualizado" : "Contrato creado");
-      router.push("/contracts");
+  toast.show?.(isEdit ? "Contrato actualizado" : "Contrato creado");
+  window.location.href = "/contracts";
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error guardando contrato");
     } finally {
@@ -347,20 +376,22 @@ export default function ContractNewPage() {
     <div className="mx-auto max-w-6xl w-full px-6 py-8">
       <div className="flex items-start justify-between gap-6 mb-6">
         <div>
-          <h1 className="text-3xl font-semibold flex items-center gap-2">
-            <BackButton href="/contracts" />
+          <h1 className="text-3xl font-semibold">
             {isEdit ? "Editar Contrato" : "Alta de Contrato"}
           </h1>
           <p className="text-sm text-neutral-400 mt-1">Elegís Propiedad y se fija el Titular. El inquilino es editable si está vacío.</p>
         </div>
 
-        <button
-          onClick={() => void handleSave()}
-          disabled={saving}
-          className="rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-5 py-2 text-sm text-white font-semibold shadow hover:brightness-110 transition disabled:opacity-60"
-        >
-          {saving ? "Guardando..." : "Guardar"}
-        </button>
+        <div className="flex items-center gap-3">
+          <BackButton href="/contracts" />
+          <button
+            onClick={() => void handleSave()}
+            disabled={saving}
+            className="rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-5 py-2 text-sm text-white font-semibold shadow hover:brightness-110 transition disabled:opacity-60"
+          >
+            {saving ? "Guardando..." : "Guardar"}
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -484,7 +515,7 @@ export default function ContractNewPage() {
         </CardSection>
 
         {/* Col 2 */}
-        <CardSection title="Importes" subtitle="Base + moneda">
+        <CardSection title="Importes" subtitle="Base + moneda + comisiones">
           <div className="grid grid-cols-1 gap-3">
             <div>
               <label className="block mb-1 text-sm font-medium text-neutral-200">Alquiler mensual (base)</label>
@@ -507,6 +538,34 @@ export default function ContractNewPage() {
                 <option value="ARS">ARS</option>
                 <option value="USD">USD</option>
               </select>
+            </div>
+
+            <div>
+              <label className="block mb-1 text-sm font-medium text-neutral-200">Comisión inmobiliaria mensual (%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/40 text-neutral-100 text-sm outline-none focus:border-white/20"
+                value={form.commissionMonthlyPct || ""}
+                onChange={(e) => setForm((f) => ({ ...f, commissionMonthlyPct: e.target.value }))}
+                placeholder="Ej: 10"
+              />
+              <div className="mt-1 text-[11px] text-neutral-500">No se suma al alquiler, se descuenta en liquidación.</div>
+            </div>
+
+            <div>
+              <label className="block mb-1 text-sm font-medium text-neutral-200">Comisión total por contrato (%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/40 text-neutral-100 text-sm outline-none focus:border-white/20"
+                value={form.commissionTotalPct || ""}
+                onChange={(e) => setForm((f) => ({ ...f, commissionTotalPct: e.target.value }))}
+                placeholder="Ej: 5"
+              />
+              <div className="mt-1 text-[11px] text-neutral-500">Se descuenta del total del contrato en liquidación.</div>
             </div>
           </div>
         </CardSection>

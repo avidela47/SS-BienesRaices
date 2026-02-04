@@ -1,5 +1,19 @@
 "use client";
 
+function getPctField(contrato: ContractDTO, field: string): number {
+  // @ts-expect-error field puede venir del backend aunque no esté en el tipo
+  if (contrato.billing && typeof contrato.billing[field] !== "undefined") {
+    // @ts-expect-error field puede venir del backend aunque no esté en el tipo
+    return Number(contrato.billing[field]);
+  }
+  // @ts-expect-error field puede venir del backend aunque no esté en el tipo
+  if (typeof contrato[field] !== "undefined") {
+    // @ts-expect-error field puede venir del backend aunque no esté en el tipo
+    return Number(contrato[field]);
+  }
+  return 0;
+}
+
 import Link from "next/link";
 import BackButton from "@/app/components/BackButton";
 import { useEffect, useMemo, useState } from "react";
@@ -48,7 +62,9 @@ type ContractDTO = {
 
   montoBase?: number;
 
+  // Nota: en el modelo Mongoose se llama `duracionMeses`.
   duracion?: number;
+  duracionMeses?: number;
   valorCuota?: number;
   diaVencimiento?: number;
   actualizacionCadaMeses?: number;
@@ -213,9 +229,10 @@ export default function ContractsPage() {
 
   function generarCuotasSimuladas(contrato: ContractDTO): InstallmentSim[] {
     const cuotas: InstallmentSim[] = [];
-    const duracion = Number(contrato.duracion) || 0;
+  const duracion = Number(contrato.duracionMeses ?? contrato.duracion) || 0;
     const baseRent = contrato.valorCuota ?? contrato.billing?.baseRent ?? 0;
     const startDate = contrato.startDate ? new Date(contrato.startDate) : null;
+  if (startDate) startDate.setHours(12, 0, 0, 0); // normalizar a mediodía para evitar desplazamientos por zona
     if (!duracion || !startDate) return [];
 
     const montoActual = Number(baseRent) || 0; // ✅ prefer-const
@@ -245,29 +262,27 @@ export default function ContractsPage() {
     setViewLoading(true);
 
     try {
-      const res = await fetch("/api/installments", { cache: "no-store" });
-      const data = (await res.json()) as { ok?: boolean; installments?: InstallmentDTO[]; error?: string };
+      // Obtener detalle del contrato (incluye cuotas con mora calculada) para asegurar que mostramos los valores más recientes
+      const res = await fetch(`/api/contracts/${contrato._id}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) throw new Error(data?.error || "No se pudo cargar detalle del contrato");
 
-      if (!res.ok || !data.ok || !Array.isArray(data.installments)) {
-        throw new Error(data.error || "No se pudieron cargar cuotas");
-      }
+      const serverContract = data.contract as ContractDTO;
+      const installmentsRaw: InstallmentDTO[] = Array.isArray(data.installments) ? data.installments : [];
+      const cuotas = installmentsRaw.map<InstallmentSim>((i) => {
+        const late = Number(i.lateFeeAccrued || 0);
+        return {
+          periodo: i.period,
+          vencimiento: i.dueDate ? i.dueDate.slice(0, 10) : "-",
+          monto: i.amount,
+          montoConMora: i.amount + late,
+          estado: installmentStatusLabel(i.status),
+          pagado: i.status === "PAID",
+          pago: i.paidAt ? i.paidAt.slice(0, 10) : "-",
+        };
+      });
 
-      const cuotas = data.installments
-        .filter((i) => i.contractId === contrato._id)
-        .map<InstallmentSim>((i) => {
-          const late = Number(i.lateFeeAccrued || 0);
-          return {
-            periodo: i.period,
-            vencimiento: i.dueDate ? i.dueDate.slice(0, 10) : "-",
-            monto: i.amount,
-            montoConMora: i.amount + late,
-            estado: installmentStatusLabel(i.status),
-            pagado: i.status === "PAID",
-            pago: i.paidAt ? i.paidAt.slice(0, 10) : "-",
-          };
-        });
-
-      setViewModal({ open: true, contrato, cuotas: cuotas.length ? cuotas : generarCuotasSimuladas(contrato) });
+      setViewModal({ open: true, contrato: serverContract as ContractDTO, cuotas: cuotas.length ? cuotas : generarCuotasSimuladas(serverContract as ContractDTO) });
     } catch (e) {
       toast.show?.(e instanceof Error ? e.message : "No se pudieron cargar cuotas");
       setViewModal({ open: true, contrato, cuotas: generarCuotasSimuladas(contrato) });
@@ -543,10 +558,20 @@ export default function ContractsPage() {
                   <span className="font-semibold text-neutral-400">Inquilino:</span> {getTenant(viewModal.contrato)?.fullName || "—"}
                 </div>
                 <div>
-                  <span className="font-semibold text-neutral-400">Inicio:</span> {viewModal.contrato.startDate?.slice(0, 10) || "-"}
+                  <span className="font-semibold text-neutral-400">Inicio:</span> {(() => {
+                    const d = new Date(viewModal.contrato.startDate);
+                    if (!viewModal.contrato.startDate) return "-";
+                    if (isNaN(d.getTime())) return String(viewModal.contrato.startDate);
+                    return d.toLocaleDateString("es-AR", { timeZone: "UTC" });
+                  })()}
                 </div>
                 <div>
-                  <span className="font-semibold text-neutral-400">Fin:</span> {viewModal.contrato.endDate?.slice(0, 10) || "-"}
+                  <span className="font-semibold text-neutral-400">Fin:</span> {(() => {
+                    const d = new Date(viewModal.contrato.endDate);
+                    if (!viewModal.contrato.endDate) return "-";
+                    if (isNaN(d.getTime())) return String(viewModal.contrato.endDate);
+                    return d.toLocaleDateString("es-AR", { timeZone: "UTC" });
+                  })()}
                 </div>
                 <div>
                   <span className="font-semibold text-neutral-400">Base:</span>{" "}
@@ -572,10 +597,16 @@ export default function ContractsPage() {
                 </div>
                 <div>
                   <span className="font-semibold text-neutral-400">% actualización:</span>{" "}
-                  {viewModal.contrato.ajustes?.[0]?.percentage ??
-                  viewModal.contrato.billing?.ajustes?.[0]?.percentage ??
-                  0}
-                  %
+                  {(() => {
+                    // Buscar el porcentaje de ajuste en ajustes[0].percentage, tanto en root como en billing
+                    let pct = 0;
+                    if (Array.isArray(viewModal.contrato.ajustes) && viewModal.contrato.ajustes[0]?.percentage) {
+                      pct = Number(viewModal.contrato.ajustes[0].percentage);
+                    } else if (Array.isArray(viewModal.contrato.billing?.ajustes) && viewModal.contrato.billing.ajustes[0]?.percentage) {
+                      pct = Number(viewModal.contrato.billing.ajustes[0].percentage);
+                    }
+                    return pct;
+                  })()}%
                 </div>
                 <div>
                   <span className="font-semibold text-neutral-400">Mora:</span>{" "}
@@ -603,7 +634,27 @@ export default function ContractsPage() {
                     return "—";
                   })()}
                 </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Comisión mensual:</span>{" "}
+                  {(() => {
+                    const pct = getPctField(viewModal.contrato, "commissionMonthlyPct");
+                    const base = viewModal.contrato.valorCuota ?? viewModal.contrato.billing?.baseRent ?? viewModal.contrato.montoBase ?? 0;
+                    const monto = Math.round((base * pct) / 100);
+                    return `${pct}% ($${monto.toLocaleString("es-AR")})`;
+                  })()}
+                </div>
+                <div>
+                  <span className="font-semibold text-neutral-400">Comisión total:</span>{" "}
+                  {(() => {
+                    const pct = getPctField(viewModal.contrato, "commissionTotalPct");
+                    const base = viewModal.contrato.valorCuota ?? viewModal.contrato.billing?.baseRent ?? viewModal.contrato.montoBase ?? 0;
+                    const meses = viewModal.contrato.duracionMeses ?? viewModal.contrato.duracion ?? 0;
+                    const monto = Math.round((base * meses * pct) / 100);
+                    return `${pct}% ($${monto.toLocaleString("es-AR")})`;
+                  })()}
+                </div>
                 <div className="pt-2">
+                <div>
                   <Link
                     href="/documentation"
                     className="inline-flex items-center rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 transition"
@@ -611,17 +662,16 @@ export default function ContractsPage() {
                     Ir a documentación
                   </Link>
                 </div>
-              </div>
+                </div>
 
+              </div>
               <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                 <div className="px-3 py-2 text-xs text-neutral-300 border-b border-white/10">Alquiler a pagar</div>
                 {viewLoading ? (
                   <div className="px-3 py-4 text-sm text-neutral-400">Cargando cuotas...</div>
-                ) : viewModal.cuotas.length === 0 ? (
-                  <div className="px-3 py-4 text-sm text-neutral-400">Sin cuotas disponibles.</div>
                 ) : (
-                  <div className="max-h-[55vh] overflow-y-auto">
-                    <div className="grid grid-cols-4 gap-2 px-3 py-2 text-[11px] uppercase tracking-wide text-neutral-400 bg-white/5 sticky top-0">
+                  <>
+                    <div className="grid grid-cols-4 gap-2 px-3 py-2 text-xs text-neutral-400">
                       <div>Periodo</div>
                       <div>Vence</div>
                       <div>Importe</div>
@@ -637,7 +687,7 @@ export default function ContractsPage() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             </div>

@@ -15,10 +15,6 @@ function formatMoneyARS(n: number): string {
   return n.toLocaleString("es-AR", { style: "currency", currency: "ARS" });
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("es-AR");
-}
 
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -457,7 +453,14 @@ export default function InstallmentsPage() {
                           </td>
 
                           <td className="px-4 py-3 text-white/80">{row.period}</td>
-                          <td className="px-4 py-3 text-white/80">{formatDate(row.dueDate)}</td>
+                          <td className="px-4 py-3 text-white/80">{
+                            (() => {
+                              if (!row.dueDate) return "—";
+                              const d = new Date(row.dueDate);
+                              if (isNaN(d.getTime())) return String(row.dueDate);
+                              return d.toLocaleDateString("es-AR");
+                            })()
+                          }</td>
                           <td className="px-4 py-3 text-white/80">{formatMoneyARS(row.amount)}</td>
 
                           <td className="px-4 py-3 text-white/80">

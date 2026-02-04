@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbConnect } from "@/lib/mongoose";
 import Installment from "@/models/Installment";
+import Contract from "@/models/Contract";
+import { CashMovement } from "@/models/CashMovement";
 import { Payment, type PaymentMethod } from "@/models/Payment";
 
 const TENANT_ID = "default";
@@ -90,6 +92,10 @@ export async function POST(req: NextRequest) {
 
     const paymentDate = data.date ? new Date(data.date) : new Date();
 
+    const prevPaidAmount = installment.paidAmount || 0;
+    const prevStatus = installment.status;
+    const prevPaidAt = installment.paidAt;
+
     const payment = await Payment.create({
       tenantId: TENANT_ID,
       contractId: installment.contractId,
@@ -115,6 +121,101 @@ export async function POST(req: NextRequest) {
     }
 
     await installment.save();
+
+    const contract = await Contract.findOne({ tenantId: TENANT_ID, _id: installment.contractId }).lean();
+    if (!contract) {
+      await Payment.deleteOne({ _id: payment._id });
+      installment.paidAmount = prevPaidAmount;
+      installment.status = prevStatus;
+      installment.paidAt = prevPaidAt || null;
+      await installment.save();
+      return NextResponse.json({ ok: false, error: "contract not found" }, { status: 400 });
+    }
+
+    const currency = contract.billing?.currency || "ARS";
+  const commissionMonthlyPctRaw = Number(contract.billing?.commissionMonthlyPct ?? 0);
+  const commissionMonthlyPct = Number.isFinite(commissionMonthlyPctRaw) ? Math.min(100, Math.max(0, commissionMonthlyPctRaw)) : 0;
+  const commissionAmount = Math.round((data.amount * commissionMonthlyPct) / 100);
+  const ownerNetAmount = Math.max(0, data.amount - commissionAmount);
+
+    try {
+      await CashMovement.create({
+        tenantId: TENANT_ID,
+        type: "INCOME",
+        subtype: "RENT",
+        status: "COLLECTED",
+        amount: data.amount,
+        currency,
+        date: paymentDate,
+        contractId: contract._id,
+        propertyId: contract.propertyId,
+        ownerId: contract.ownerId,
+        tenantPersonId: contract.tenantPersonId,
+        partyType: "TENANT",
+        partyId: contract.tenantPersonId,
+        installmentId: installment._id,
+        paymentId: payment._id,
+        notes: data.notes || "",
+        createdBy: "system",
+      });
+
+      if (commissionAmount > 0) {
+        await CashMovement.create({
+          tenantId: TENANT_ID,
+          type: "COMMISSION",
+          subtype: "AGENCY_FEE",
+          status: "COLLECTED",
+          amount: commissionAmount,
+          currency,
+          date: paymentDate,
+          contractId: contract._id,
+          propertyId: contract.propertyId,
+          ownerId: contract.ownerId,
+          tenantPersonId: contract.tenantPersonId,
+          partyType: "AGENCY",
+          installmentId: installment._id,
+          paymentId: payment._id,
+          notes: data.notes || "",
+          createdBy: "system",
+        });
+      }
+
+      if (ownerNetAmount > 0) {
+        await CashMovement.create({
+          tenantId: TENANT_ID,
+          type: "EXPENSE",
+          subtype: "OWNER_NET",
+          status: "READY_TO_TRANSFER",
+          amount: ownerNetAmount,
+          currency,
+          date: paymentDate,
+          contractId: contract._id,
+          propertyId: contract.propertyId,
+          ownerId: contract.ownerId,
+          tenantPersonId: contract.tenantPersonId,
+          partyType: "OWNER",
+          partyId: contract.ownerId,
+          installmentId: installment._id,
+          paymentId: payment._id,
+          notes: data.notes || "",
+          createdBy: "system",
+        });
+      }
+    } catch (movementError) {
+      await CashMovement.updateMany(
+        { paymentId: payment._id, status: { $ne: "VOID" } },
+        { $set: { status: "VOID", voidedAt: new Date(), voidedBy: "system", voidReason: "rollback" } }
+      );
+      await Payment.deleteOne({ _id: payment._id });
+      installment.paidAmount = prevPaidAmount;
+      installment.status = prevStatus;
+      installment.paidAt = prevPaidAt || null;
+      await installment.save();
+      return NextResponse.json(
+        { ok: false, error: `Failed to create cash movement: ${getErrorMessage(movementError)}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ ok: true, payment, installment });
   } catch (err: unknown) {

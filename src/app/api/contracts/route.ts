@@ -27,6 +27,8 @@ type ContractCreateDTO = {
 
   dueDay: number;
   currency?: string;
+  commissionMonthlyPct?: number; // Comisión mensual (% sobre alquiler)
+  commissionTotalPct?: number;   // Comisión total por contrato (% sobre monto total)
 
   actualizacionCadaMeses?: number;
   ajustes?: BillingAdjustmentInput[];
@@ -160,7 +162,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: "dueDay must be 1..28" }, { status: 400 });
     }
 
-    const startDate = new Date(String(raw.startDate));
+    // Forzar startDate a mediodía UTC para evitar corrimientos por zona horaria
+    const original = new Date(String(raw.startDate));
+    const startDate = new Date(Date.UTC(
+      original.getUTCFullYear(),
+      original.getUTCMonth(),
+      original.getUTCDate(),
+      12, 0, 0, 0
+    ));
     if (Number.isNaN(startDate.getTime())) {
       return NextResponse.json({ ok: false, message: "startDate invalid" }, { status: 400 });
     }
@@ -170,11 +179,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: "actualizacionCadaMeses invalid" }, { status: 400 });
     }
 
-  const currency = (raw.currency ? String(raw.currency).trim() : "ARS") || "ARS";
-    const billingInput = (raw as { billing?: { notes?: unknown; lateFeePolicy?: { type?: unknown; value?: unknown } } })
-      .billing;
+    const currency = (raw.currency ? String(raw.currency).trim() : "ARS") || "ARS";
+    const billingInput = (
+      raw as {
+        billing?: {
+          notes?: unknown;
+          lateFeePolicy?: { type?: unknown; value?: unknown };
+          commissionMonthlyPct?: unknown;
+          commissionTotalPct?: unknown;
+        };
+      }
+    ).billing;
     const notesRaw = billingInput?.notes;
-  const notes = notesRaw !== undefined && notesRaw !== null ? String(notesRaw).trim() : "";
+    const notes = notesRaw !== undefined && notesRaw !== null ? String(notesRaw).trim() : "";
+    const commissionMonthlyPctRaw =
+      (typeof billingInput?.commissionMonthlyPct !== "undefined" ? billingInput?.commissionMonthlyPct :
+      typeof raw.commissionMonthlyPct !== "undefined" ? raw.commissionMonthlyPct : 0);
+    const commissionMonthlyPct = toNumberSafe(commissionMonthlyPctRaw);
+    if (Number.isNaN(commissionMonthlyPct) || commissionMonthlyPct < 0) {
+      return NextResponse.json({ ok: false, message: "commissionMonthlyPct invalid" }, { status: 400 });
+    }
+    const commissionTotalPctRaw =
+      (typeof billingInput?.commissionTotalPct !== "undefined" ? billingInput?.commissionTotalPct :
+      typeof raw.commissionTotalPct !== "undefined" ? raw.commissionTotalPct : 0);
+    const commissionTotalPct = toNumberSafe(commissionTotalPctRaw);
+    if (Number.isNaN(commissionTotalPct) || commissionTotalPct < 0) {
+      return NextResponse.json({ ok: false, message: "commissionTotalPct invalid" }, { status: 400 });
+    }
+    // Debug log para verificar que frontend envía los valores correctamente
+    console.log("[CONTRACT-API] commissionMonthlyPct=", commissionMonthlyPct, "commissionTotalPct=", commissionTotalPct, "billingInput=", billingInput);
     const lateFeeType = billingInput?.lateFeePolicy?.type;
     const lateFeeValue = billingInput?.lateFeePolicy?.value;
     const lateFeePolicy = {
@@ -193,6 +226,8 @@ export async function POST(req: Request) {
         ajustes = buildAjustesCompat(duracionMeses, actualizacionCadaMeses, pctCompat);
       }
     }
+    // LOG para depuración
+    console.log("[CONTRACT-API] Nuevo contrato payload:", JSON.stringify({ raw, ajustes }, null, 2));
 
     // validar formato ajustes
     for (const a of ajustes) {
@@ -237,8 +272,8 @@ export async function POST(req: Request) {
     // Código
     const code = raw.code && String(raw.code).trim() ? String(raw.code).trim() : await nextContractCode();
 
-    // endDate derivado (duracion manda)
-    const endDate = addMonthsSafe(startDate, duracionMeses);
+  // endDate derivado (duracion manda): fin = fecha inicio + duracionMeses - 1 día
+  const endDate = new Date(addMonthsSafe(startDate, duracionMeses).getTime() - 24 * 60 * 60 * 1000);
 
     const montoBaseInt = Math.round(montoBase);
     const dueDayInt = Math.round(dueDay);
@@ -265,18 +300,42 @@ export async function POST(req: Request) {
 
       status: "ACTIVE",
       billing: {
-        // ✅ compat con muchos schemas
         dueDay: dueDayInt,
         baseRent: montoBaseInt,
-
         currency,
         actualizacionCadaMeses,
         ajustes,
-  lateFeePolicy,
+        lateFeePolicy,
+  commissionMonthlyPct: Number.isFinite(commissionMonthlyPct) ? commissionMonthlyPct : 0,
+  commissionTotalPct: Number.isFinite(commissionTotalPct) ? commissionTotalPct : 0,
         notes: notes || "Sin notas",
       },
       documents: [],
     });
+
+    if (commissionTotalPct > 0) {
+      const totalContractAmount = montoBaseInt * duracionMeses;
+      const initCommissionAmount = Math.round((totalContractAmount * commissionTotalPct) / 100);
+      if (initCommissionAmount > 0) {
+        const { CashMovement } = await import("@/models/CashMovement");
+        await CashMovement.create({
+          tenantId: TENANT_ID,
+          type: "COMMISSION",
+          subtype: "CONTRACT_TOTAL",
+          status: "PENDING",
+          amount: initCommissionAmount,
+          currency,
+          date: new Date(),
+          contractId: contract._id,
+          propertyId: contract.propertyId,
+          ownerId: contract.ownerId,
+          tenantPersonId: contract.tenantPersonId,
+          partyType: "AGENCY",
+          notes: `Comisión total contrato ${commissionTotalPct}%`,
+          createdBy: "system",
+        });
+      }
+    }
 
     // Bloquear propiedad + asignar inquilino actual
     await Property.findByIdAndUpdate(raw.propertyId, {

@@ -22,6 +22,46 @@ function addMonthsSafe(date: Date, months: number): Date {
   return d;
 }
 
+function lastDayOfMonth(year: number, monthIndex0: number): number {
+  return new Date(year, monthIndex0 + 1, 0).getDate();
+}
+
+function formatPeriodYYYYMM(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+
+function buildDueDateForMonth(baseStart: Date, monthOffset: number, dueDay: number): Date {
+  const d = new Date(baseStart);
+  d.setDate(1);
+  d.setMonth(d.getMonth() + monthOffset);
+
+  const year = d.getFullYear();
+  const monthIndex0 = d.getMonth();
+  const last = lastDayOfMonth(year, monthIndex0);
+  const day = Math.min(dueDay, last);
+
+  return new Date(year, monthIndex0, day, 12, 0, 0, 0);
+}
+
+function toNumberSafe(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(String(v ?? "").trim());
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function requiredAdjustmentsCount(duracionMeses: number, cadaMeses: number): number {
+  if (cadaMeses <= 0) return 0;
+  return Math.floor((duracionMeses - 1) / cadaMeses);
+}
+
+function buildAjustesCompat(duracionMeses: number, actualizacionCadaMeses: number, porcentajeActualizacion: number) {
+  const expected = requiredAdjustmentsCount(duracionMeses, actualizacionCadaMeses);
+  if (expected <= 0) return [] as Array<{ n: number; percentage: number }>;
+  const pct = Number.isFinite(porcentajeActualizacion) ? porcentajeActualizacion : 0;
+  return Array.from({ length: expected }, (_v, i) => ({ n: i + 1, percentage: pct }));
+}
+
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -242,7 +282,13 @@ export async function PUT(
       currency: string;
       actualizacionCadaMeses: number;
       ajustes: Array<{ n: number; percentage: number }>;
-      billing?: { lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number }; notes?: string };
+      billing?: {
+        lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+        ajustes?: Array<{ n: number; percentage: number }>;
+        notes?: string;
+        commissionMonthlyPct?: number | string;
+        commissionTotalPct?: number | string;
+      };
     }>;
 
     const duracionMeses = Number(body.duracionMeses ?? 0);
@@ -263,16 +309,21 @@ export async function PUT(
     }
 
     const startDate = new Date(body.startDate);
+    // Normalizar a mediodía para evitar desplazamientos por zona horaria al guardar
+    startDate.setHours(12, 0, 0, 0);
     if (Number.isNaN(startDate.getTime())) {
       return NextResponse.json({ ok: false, message: "startDate inválido" }, { status: 400 });
     }
-
-    const endDate = addMonthsSafe(startDate, duracionMeses);
+    // endDate = startDate + duracionMeses - 1 día
+    const endDate = new Date(addMonthsSafe(startDate, duracionMeses).getTime() - 24 * 60 * 60 * 1000);
     const currency = (body.currency ? String(body.currency).trim() : "ARS") || "ARS";
     const actualizacionCadaMeses = Number(body.actualizacionCadaMeses ?? 0);
     const notes = body.billing?.notes ? String(body.billing.notes).trim() : "";
 
-    const contract = await Contract.findOneAndUpdate(
+  // Debug: log incoming billing commission values for PUT
+  console.log("[CONTRACT-PUT] billing incoming:", body.billing?.commissionMonthlyPct, body.billing?.commissionTotalPct);
+
+  const contract = await Contract.findOneAndUpdate(
       { tenantId: TENANT_ID, _id: id },
       {
         propertyId: new Types.ObjectId(body.propertyId),
@@ -294,6 +345,8 @@ export async function PUT(
           ajustes: Array.isArray(body.ajustes) ? body.ajustes : [],
           lateFeePolicy: body.billing?.lateFeePolicy ?? { type: "NONE", value: 0 },
           notes: notes || "Sin notas",
+          commissionMonthlyPct: Number.isFinite(Number(body.billing?.commissionMonthlyPct)) ? Number(body.billing?.commissionMonthlyPct) : 0,
+          commissionTotalPct: Number.isFinite(Number(body.billing?.commissionTotalPct)) ? Number(body.billing?.commissionTotalPct) : 0,
         },
       },
       { new: true }
@@ -302,6 +355,104 @@ export async function PUT(
     if (!contract) {
       return NextResponse.json({ ok: false, message: "Contrato no encontrado" }, { status: 404 });
     }
+
+    // --- Regenerar cuotas pendientes si cambió la parametría relevante ---
+    try {
+      const c = contract as unknown as {
+        duracionMeses?: number;
+        duracion?: number;
+        montoBase?: number;
+        valorCuota?: number;
+        billing?: { baseRent?: number; dueDay?: number; actualizacionCadaMeses?: number };
+        startDate?: string | Date;
+        _id?: unknown;
+      };
+
+      const duracion = Number.isFinite(Number(duracionMeses)) && duracionMeses > 0 ? duracionMeses : c.duracionMeses ?? c.duracion ?? 0;
+      const baseRent = Math.round(montoBase) || c.montoBase || c.valorCuota || (c.billing && c.billing.baseRent) || 0;
+      const dueDayInt = Math.round(dueDay) || (c.billing && c.billing.dueDay) || 1;
+      const cada = Number.isFinite(Number(actualizacionCadaMeses)) ? actualizacionCadaMeses : c.billing?.actualizacionCadaMeses ?? 0;
+
+      // obtener ajustes: preferimos body.ajustes -> body.billing.ajustes -> compat
+      let ajustes: Array<{ n: number; percentage: number }> = Array.isArray(body.ajustes) ? (body.ajustes as Array<{ n: number; percentage: number }>) : [];
+      if (!ajustes.length && Array.isArray(body.billing?.ajustes)) ajustes = body.billing!.ajustes as Array<{ n: number; percentage: number }>;
+      if (!ajustes.length) {
+        const pctCompat = toNumberSafe((body as unknown as { porcentajeActualizacion?: unknown }).porcentajeActualizacion ?? 0);
+        if (cada > 0 && Number.isFinite(pctCompat) && pctCompat > 0) ajustes = buildAjustesCompat(duracion, cada, pctCompat);
+      }
+
+      // Obtener cuotas existentes y conservar las ya pagadas
+      const existing = await Installment.find({ tenantId: TENANT_ID, contractId: contract._id }).lean();
+      // Considerar como "protegidas" las cuotas ya pagadas o parcialmente pagadas (paidAmount>0)
+      const paidPeriods = new Set(
+        existing
+          .filter((it) => it.status === "PAID" || (it.paidAmount && Number(it.paidAmount) > 0))
+          .map((it) => String(it.period))
+      );
+
+      // Borrar cuotas no pagadas (pendientes/otras)
+      await Installment.deleteMany({ tenantId: TENANT_ID, contractId: contract._id, status: { $ne: "PAID" } });
+
+      // Generar nuevas cuotas para los periodos que no están pagados
+      type NewInstallment = {
+        tenantId: string;
+        contractId: unknown;
+        period: string;
+        dueDate: Date;
+        amount: number;
+        lateFeeAccrued: number;
+        status: string;
+        paidAmount: number;
+        paidAt: null | string;
+        lastReminderAt: null | string;
+      };
+
+      const installmentsToInsert: NewInstallment[] = [];
+      let currentAmount = baseRent;
+      let adjIndex = 0;
+      for (let month = 1; month <= (duracion || 0); month += 1) {
+        if (cada > 0 && month !== 1) {
+          const isAdjustmentMonth = (month - 1) % cada === 0;
+          if (isAdjustmentMonth) {
+            const adj = ajustes[adjIndex];
+            const pct = adj ? toNumberSafe(adj.percentage) : 0;
+            const pctSafe = Number.isFinite(pct) ? pct : 0;
+
+            currentAmount = Math.round(currentAmount * (1 + pctSafe / 100));
+            adjIndex += 1;
+          }
+        }
+
+        const monthOffset = month - 1;
+        const monthDate = addMonthsSafe(new Date(String(c.startDate)), monthOffset);
+        const period = formatPeriodYYYYMM(monthDate);
+
+        if (paidPeriods.has(period)) continue; // no sobrescribir cuotas pagadas
+
+        const dueDateComputed = buildDueDateForMonth(new Date(String(c.startDate)), monthOffset, dueDayInt);
+
+        installmentsToInsert.push({
+          tenantId: TENANT_ID,
+          contractId: contract._id,
+          period,
+          dueDate: dueDateComputed,
+          amount: currentAmount,
+          lateFeeAccrued: 0,
+          status: "PENDING",
+          paidAmount: 0,
+          paidAt: null,
+          lastReminderAt: null,
+        });
+      }
+
+      if (installmentsToInsert.length) {
+        await Installment.insertMany(installmentsToInsert, { ordered: true });
+        console.log("[CONTRACT-PUT] Regeneradas cuotas (no pagadas):", installmentsToInsert.length, "contractId=", String(contract._id));
+      }
+    } catch (e) {
+      console.error("[CONTRACT-PUT] Error regenerando cuotas:", e);
+    }
+
     return NextResponse.json({ ok: true, contract });
   } catch (err: unknown) {
     return NextResponse.json(

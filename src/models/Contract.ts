@@ -18,6 +18,8 @@ export type BillingBlock = {
   actualizacionCadaMeses: number;
   ajustes: BillingAdjustment[];
   lateFeePolicy: LateFeePolicy;
+  commissionMonthlyPct?: number; // Comisión mensual (% sobre alquiler)
+  commissionTotalPct?: number;   // Comisión total por contrato (% sobre monto total)
   notes: string;
 };
 
@@ -68,7 +70,9 @@ const BillingSchema = new Schema<BillingBlock>(
     actualizacionCadaMeses: { type: Number, required: true, default: 0 },
     ajustes: { type: [BillingAdjustmentSchema], required: true, default: [] },
     lateFeePolicy: { type: LateFeePolicySchema, required: true, default: { type: "NONE", value: 0 } },
-  notes: { type: String, default: "" },
+    commissionMonthlyPct: { type: Number, required: true, default: 0, min: 0 }, // Comisión mensual (% sobre alquiler)
+    commissionTotalPct: { type: Number, required: true, default: 0, min: 0 },   // Comisión total por contrato (% sobre monto total)
+    notes: { type: String, default: "" },
   },
   { _id: false }
 );

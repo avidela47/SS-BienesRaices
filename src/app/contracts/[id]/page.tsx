@@ -1,4 +1,15 @@
+
 "use client";
+
+function getCommissionMonthlyPct(contract: unknown): number {
+  const b = getBilling(contract);
+  return safeNumber(b.commissionMonthlyPct, 0);
+}
+
+function getCommissionTotalPct(contract: unknown): number {
+  const b = getBilling(contract);
+  return safeNumber(b.commissionTotalPct, 0);
+}
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -74,11 +85,6 @@ function getBilling(v: unknown): Record<string, unknown> {
   return {};
 }
 
-function getDueDay(contract: unknown): number {
-  const b = getBilling(contract);
-  return safeNumber(b.dueDay, 0);
-}
-
 function getBaseRent(contract: unknown): number {
   const b = getBilling(contract);
   return safeNumber(b.baseRent, 0);
@@ -88,12 +94,6 @@ function getCurrency(contract: unknown): string {
   const b = getBilling(contract);
   const c = safeString(b.currency, "ARS");
   return c || "ARS";
-}
-
-function getLateFee(contract: unknown): { type: string; value: number } {
-  const b = getBilling(contract);
-  const p = isObj(b.lateFeePolicy) ? b.lateFeePolicy : {};
-  return { type: safeString(p.type, "NONE"), value: safeNumber(p.value, 0) };
 }
 
 type InstallmentRow = {
@@ -294,10 +294,10 @@ export default function ContractDetailPage({ params }: Props) {
     return st || "—";
   }, [contract]);
 
-  const dueDay = contract ? getDueDay(contract) : 0;
   const baseRent = contract ? getBaseRent(contract) : 0;
   const currency = contract ? getCurrency(contract) : "ARS";
-  const lateFee = contract ? getLateFee(contract) : { type: "NONE", value: 0 };
+  const commissionMonthlyPct = contract ? getCommissionMonthlyPct(contract) : 0;
+  const commissionTotalPct = contract ? getCommissionTotalPct(contract) : 0;
 
   if (loading) {
     return (
@@ -353,22 +353,21 @@ export default function ContractDetailPage({ params }: Props) {
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-neutral-400">Día vencimiento</div>
-          <div className="text-2xl font-semibold">{dueDay || "—"}</div>
-          <div className="text-xs text-neutral-500 mt-1">
-            Mora: {lateFee.type} {lateFee.value ? `(${lateFee.value})` : ""}
-          </div>
+          <div className="text-xs text-neutral-400">Comisión mensual (%)</div>
+          <div className="text-2xl font-semibold">{commissionMonthlyPct || 0}%</div>
+          <div className="text-xs text-neutral-500 mt-1">Se descuenta en liquidación mensual</div>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs text-neutral-400">Comisión total contrato (%)</div>
+          <div className="text-2xl font-semibold">{commissionTotalPct || 0}%</div>
+          <div className="text-xs text-neutral-500 mt-1">Se descuenta del total del contrato</div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs text-neutral-400">Facturado</div>
           <div className="text-2xl font-semibold">{formatARS(totals.billed)}</div>
-        </div>
-
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-neutral-400">Saldo</div>
-          <div className="text-2xl font-semibold">{formatARS(totals.balance)}</div>
-          <div className="text-xs text-neutral-500 mt-1">Pagado: {formatARS(totals.paid)}</div>
+          <div className="text-xs text-neutral-500 mt-1">Saldo: {formatARS(totals.balance)}<br />Pagado: {formatARS(totals.paid)}</div>
         </div>
       </div>
 
