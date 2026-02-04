@@ -326,7 +326,7 @@ export default function Propiedades() {
                           Editar
                         </button>
                         <button
-                          className="px-3 py-1.5 rounded-full border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white text-xs"
+                          className="px-3 py-1.5 rounded-full border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white text-xs cursor-pointer"
                           onClick={() => setDeleteTarget(p)}
                         >
                           Eliminar
@@ -373,7 +373,7 @@ export default function Propiedades() {
                 </button>
 
                 <button
-                  className="px-4 py-2 rounded-xl border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl border border-red-400/30 bg-red-400/10 hover:bg-red-400/15 text-white cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                   disabled={deleting}
                   onClick={async () => {
                     if (!deleteTarget) return;

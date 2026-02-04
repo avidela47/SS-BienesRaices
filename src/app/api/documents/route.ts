@@ -7,6 +7,8 @@ import { dbConnect } from "@/lib/mongoose";
 import Document, { type DocumentEntityType } from "@/models/Document";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const TENANT_ID = "default";
 const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads");

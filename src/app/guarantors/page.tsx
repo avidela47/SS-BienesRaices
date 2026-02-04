@@ -642,7 +642,7 @@ export default function GuarantorsPage() {
             <button
               disabled={editSaving || deleteLoading}
               onClick={() => void deleteGuarantor()}
-              className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+              className="rounded-xl border px-4 py-2 text-sm cursor-pointer hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 borderColor: "rgba(255,255,255,0.12)",
                 background: deleteConfirm ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.03)",

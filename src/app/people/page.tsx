@@ -500,7 +500,7 @@ export default function PeoplePage() {
                 </button>
                 <button
                   type="button"
-                  className="btn-benetton-red flex-1 rounded-xl px-4 py-2 text-white shadow"
+                  className="btn-benetton-red flex-1 rounded-xl px-4 py-2 text-white shadow cursor-pointer disabled:cursor-not-allowed"
                   disabled={deleteLoading}
                   onClick={() => setDeleteConfirm(true)}
                 >
@@ -515,7 +515,7 @@ export default function PeoplePage() {
                   </div>
                   <button
                     type="button"
-                    className="btn-benetton-red rounded px-3 py-1 text-white mr-2 shadow"
+                    className="btn-benetton-red rounded px-3 py-1 text-white mr-2 shadow cursor-pointer disabled:cursor-not-allowed"
                     onClick={() => void handleDelete()}
                     disabled={deleteLoading}
                   >

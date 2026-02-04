@@ -15,14 +15,14 @@ export default function BackButton({
   if (onClick) {
     return (
       <button type="button" onClick={onClick} title={title} aria-label={title} className={className}>
-        ←
+        ☜
       </button>
     );
   }
 
   return (
     <Link href={href} title={title} aria-label={title} className={className}>
-      ←
+      ☜
     </Link>
   );
 }

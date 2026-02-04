@@ -341,12 +341,23 @@ export default function DocumentationPage() {
     try {
       setDeletingId(docId);
 
-      const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+
+      const res = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
+        method: "DELETE",
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const data = (await res.json()) as DeleteResponse;
+      window.clearTimeout(timeoutId);
 
       if (!res.ok || !data.ok) {
-        show(getErrorMessage(data, "No se pudo eliminar"));
-        return;
+        if (res.status === 404) {
+          show("Documento no encontrado, se actualizará la lista.");
+        } else {
+          show(getErrorMessage(data, "No se pudo eliminar"));
+        }
       }
 
       show("Documento eliminado");
@@ -362,24 +373,6 @@ export default function DocumentationPage() {
     }
   }
 
-  function printDoc(url: string) {
-    const win = window.open(url, "_blank", "noopener,noreferrer");
-    if (!win) return;
-    const onLoad = () => {
-      try {
-        win.focus();
-        win.print();
-      } catch {
-        // noop
-      }
-    };
-
-    if (win.document.readyState === "complete") {
-      onLoad();
-    } else {
-      win.addEventListener("load", onLoad, { once: true });
-    }
-  }
 
   return (
     <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
@@ -534,8 +527,8 @@ export default function DocumentationPage() {
               <div className="rounded-xl border border-white/10 overflow-hidden">
                 <div className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide text-neutral-300 bg-white/5">
                   <div className="col-span-5">Archivo</div>
-                  <div className="col-span-2">Tipo doc</div>
-                  <div className="col-span-2">Mime</div>
+                  <div className="col-span-2">Tipo de documento</div>
+                  <div className="col-span-2">Notas</div>
                   <div className="col-span-2">Tamaño</div>
                   <div className="col-span-1 text-right">Acc.</div>
                 </div>
@@ -556,32 +549,32 @@ export default function DocumentationPage() {
                           {d.originalName}
                         </a>
                         <div className="text-xs opacity-60 mt-0.5">{new Date(d.createdAt).toLocaleString()}</div>
-                        {d.notes ? <div className="text-xs opacity-60 mt-0.5">{d.notes}</div> : null}
                       </div>
 
                       <div className="col-span-2 opacity-80 truncate" title={d.docType || ""}>
                         {d.docType || "—"}
                       </div>
 
-                      <div className="col-span-2 opacity-80 truncate" title={d.mimeType}>
-                        {d.mimeType || "—"}
+                      <div className="col-span-2 opacity-80 truncate" title={d.notes || ""}>
+                        {d.notes || "—"}
                       </div>
 
                       <div className="col-span-2 opacity-80">{bytesToHuman(d.size)}</div>
 
                       <div className="col-span-1 flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => printDoc(d.url)}
-                          className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition"
+                        <a
+                          href={d.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition relative z-10 pointer-events-auto"
                         >
                           Imprimir
-                        </button>
+                        </a>
                         <button
                           type="button"
                           onClick={() => void removeDoc(d._id)}
                           disabled={deletingId === d._id}
-                          className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition disabled:opacity-50"
+                          className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs cursor-pointer hover:bg-red-500/15 hover:border-red-400/40 hover:text-red-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {deletingId === d._id ? "…" : "Eliminar"}
                         </button>

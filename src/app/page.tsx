@@ -155,7 +155,7 @@ export default function HomePage() {
       }}
     >
       {/* Header compacto */}
-  <header className="mx-auto w-full max-w-6xl px-5 pt-2 pb-1 flex items-center justify-center flex-none">
+  <header className="mx-auto w-full max-w-6xl px-5 pt-0 pb-1 flex items-center justify-center flex-none">
         <div className="flex flex-col items-center text-center gap-2 min-w-0">
           <Image src="/logo.png" alt="Logo" width={110} height={110} className="rounded-full" />
           <div className="min-w-0 leading-tight">
