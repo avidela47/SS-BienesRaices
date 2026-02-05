@@ -1,3 +1,5 @@
+
+
 "use client";
 
 import BackButton from "@/app/components/BackButton";
@@ -109,6 +111,13 @@ function CardSection({
 }
 
 export default function ContractNewPage() {
+  // Modal cálculo índice de actualización
+  const [showCalcModal, setShowCalcModal] = useState(false);
+  const [calcIndex, setCalcIndex] = useState('IPC');
+  const [calcFrom, setCalcFrom] = useState('');
+  const [calcTo, setCalcTo] = useState('');
+  const [calcAmount, setCalcAmount] = useState('');
+  const [calcPercent, setCalcPercent] = useState('');
   const toast = useToast();
   // const router = useRouter(); // Eliminado: no se usa
   const sp = useSearchParams();
@@ -595,6 +604,126 @@ export default function ContractNewPage() {
                 value={form.porcentajeActualizacion || ""}
                 onChange={(e) => setForm((f) => ({ ...f, porcentajeActualizacion: e.target.value }))}
               />
+                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    type="button"
+                    style={{
+                      background: '#0ea5e9',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '12px 24px',
+                      fontWeight: 600,
+                      fontSize: '1rem',
+                      cursor: 'pointer',
+                      width: '100%'
+                    }}
+                    onClick={() => {
+                      setCalcIndex('IPC');
+                      setCalcFrom(form.fechaInicio || '');
+                      setCalcTo('');
+                      setCalcAmount(form.valorCuota || '');
+                      setCalcPercent('');
+                      setShowCalcModal(true);
+                    }}
+                  >
+                    Calcular índice de actualización
+                  </button>
+                </div>
+
+                {/* Modal cálculo índice de actualización */}
+                {showCalcModal && (
+                  <div style={{
+                    position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+                    background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    <div style={{ background: '#18181b', borderRadius: 12, padding: 32, minWidth: 340, maxWidth: 400, boxShadow: '0 4px 32px #0008' }}>
+                      <h2 style={{ fontWeight: 700, fontSize: 20, marginBottom: 16, color: '#fff' }}>Calcular índice de actualización</h2>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ color: '#ccc', fontSize: 14 }}>Índice</label>
+                        <select value={calcIndex} onChange={e => setCalcIndex(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 6, marginTop: 4, background: '#222', color: '#fff', border: '1px solid #444' }}>
+                          <option value="IPC">IPC (Índice de Precios al Consumidor)</option>
+                          <option value="ICL">ICL (Índice Contratos de Locación)</option>
+                          <option value="CER">CER (Coef. Estabilización de Referencia)</option>
+                          <option value="CAC">CAC (Cámara Argentina de la Construcción)</option>
+                          <option value="UVA">UVA (Unidad de Valor Adquisitivo)</option>
+                        </select>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ color: '#ccc', fontSize: 14 }}>Desde</label>
+                        <input type="date" value={calcFrom} onChange={e => setCalcFrom(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 6, marginTop: 4, background: '#222', color: '#fff', border: '1px solid #444' }} />
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ color: '#ccc', fontSize: 14 }}>Cantidad de meses</label>
+                        <input type="number" min="1" value={calcTo} onChange={e => setCalcTo(e.target.value)} style={{ width: '120px', padding: 8, borderRadius: 6, marginTop: 4, background: '#222', color: '#fff', border: '1px solid #444' }} />
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ color: '#ccc', fontSize: 14 }}>Monto base</label>
+                        <input value={calcAmount} onChange={e => setCalcAmount(e.target.value)} style={{ width: '100%', padding: 8, borderRadius: 6, marginTop: 4 }} />
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ color: '#ccc', fontSize: 14 }}>% sugerido</label>
+                        <input value={calcPercent} readOnly style={{ width: '100%', padding: 8, borderRadius: 6, marginTop: 4, background: '#222', color: '#0ea5e9', fontWeight: 700 }} placeholder="(aquí irá el cálculo)" />
+                      </div>
+                      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          style={{ padding: '8px 16px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', fontWeight: 600, cursor: 'pointer' }}
+                          onClick={async () => {
+                            // Calcular fecha final sumando meses
+                            if (!calcFrom || !calcTo || !calcAmount) {
+                              setCalcPercent('');
+                              return;
+                            }
+                            const fromDate = calcFrom;
+                            const months = parseInt(calcTo, 10);
+                            if (!months || months < 1) {
+                              setCalcPercent('');
+                              return;
+                            }
+                            const d = new Date(fromDate);
+                            d.setMonth(d.getMonth() + months);
+                            const toDate = d.toISOString().slice(0, 10);
+                            try {
+                              const res = await fetch('/api/rents/calculate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  indexKey: calcIndex,
+                                  fromDate,
+                                  toDate,
+                                  amount: Number(calcAmount)
+                                })
+                              });
+                              const json = await res.json();
+                              if (json && json.ok && typeof json.percent !== 'undefined') {
+                                setCalcPercent(String(json.percent));
+                              } else if (json && json.error) {
+                                setCalcPercent('');
+                                alert('Error al calcular índice: ' + json.error);
+                              } else {
+                                setCalcPercent('');
+                                alert('Error desconocido al calcular índice.');
+                              }
+                            } catch {
+                              setCalcPercent('');
+                              alert('Error de red o del servidor al calcular índice.');
+                            }
+                          }}
+                        >
+                          Calcular
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => setShowCalcModal(false)} style={{ padding: '8px 16px', borderRadius: 6, background: '#333', color: '#fff', border: 'none', cursor: 'pointer' }}>Cancelar</button>
+                        <button onClick={() => {
+                          setForm(f => ({ ...f, porcentajeActualizacion: calcPercent }));
+                          setShowCalcModal(false);
+                        }} style={{ padding: '8px 16px', borderRadius: 6, background: '#0ea5e9', color: '#fff', border: 'none', fontWeight: 600, cursor: 'pointer' }}>Usar este valor</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
             </div>
           </div>
         </CardSection>

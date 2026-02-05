@@ -364,6 +364,17 @@ export default function ContractDetailPage({ params }: Props) {
           <div className="text-xs text-neutral-500 mt-1">Se descuenta del total del contrato</div>
         </div>
 
+        {/* % actualización visual + botón */}
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs text-neutral-400">% actualización</div>
+          <div className="text-2xl font-semibold">{/* Aquí deberías mostrar el valor real si lo tienes */}—</div>
+          <div style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-outline-primary" style={{ width: '100%' }}>
+              Calcular % sugerido
+            </button>
+          </div>
+        </div>
+
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs text-neutral-400">Facturado</div>
           <div className="text-2xl font-semibold">{formatARS(totals.billed)}</div>
