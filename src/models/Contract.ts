@@ -1,53 +1,8 @@
-import mongoose, { Schema, Types } from "mongoose";
+import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
 export type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
 
-export type LateFeePolicy = {
-  type: "NONE" | "FIXED" | "PERCENT";
-  value: number;
-};
-
-export type BillingAdjustment = {
-  n: number;
-  percentage: number;
-};
-
-export type BillingBlock = {
-  dueDay: number;
-  currency: string;
-  actualizacionCadaMeses: number;
-  ajustes: BillingAdjustment[];
-  lateFeePolicy: LateFeePolicy;
-  commissionMonthlyPct?: number; // Comisión mensual (% sobre alquiler)
-  commissionTotalPct?: number;   // Comisión total por contrato (% sobre monto total)
-  notes: string;
-};
-
-export type ContractDoc = {
-  tenantId: string;
-  code: string;
-
-  propertyId: Types.ObjectId;
-  ownerId: Types.ObjectId;
-  tenantPersonId: Types.ObjectId;
-
-  startDate: Date;
-  endDate: Date;
-
-  duracionMeses: number;
-  montoBase: number;
-
-  status: ContractStatus;
-
-  billing: BillingBlock;
-
-  documents: unknown[];
-
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-const BillingAdjustmentSchema = new Schema<BillingAdjustment>(
+const AjusteSchema = new Schema(
   {
     n: { type: Number, required: true },
     percentage: { type: Number, required: true },
@@ -55,62 +10,78 @@ const BillingAdjustmentSchema = new Schema<BillingAdjustment>(
   { _id: false }
 );
 
-const LateFeePolicySchema = new Schema<LateFeePolicy>(
+const LateFeePolicySchema = new Schema(
   {
-    type: { type: String, enum: ["NONE", "FIXED", "PERCENT"], required: true, default: "NONE" },
-    value: { type: Number, required: true, default: 0 },
+    type: { type: String, enum: ["NONE", "FIXED", "PERCENT"], default: "NONE" },
+    value: { type: Number, default: 0 },
   },
   { _id: false }
 );
 
-const BillingSchema = new Schema<BillingBlock>(
+const BillingSchema = new Schema(
   {
-    dueDay: { type: Number, required: true, min: 1, max: 28 },
-    currency: { type: String, required: true, default: "ARS" },
-    actualizacionCadaMeses: { type: Number, required: true, default: 0 },
-    ajustes: { type: [BillingAdjustmentSchema], required: true, default: [] },
-    lateFeePolicy: { type: LateFeePolicySchema, required: true, default: { type: "NONE", value: 0 } },
-    commissionMonthlyPct: { type: Number, required: true, default: 0, min: 0 }, // Comisión mensual (% sobre alquiler)
-    commissionTotalPct: { type: Number, required: true, default: 0, min: 0 },   // Comisión total por contrato (% sobre monto total)
+    dueDay: { type: Number },
+    baseRent: { type: Number },
+    currency: { type: String },
+    lateFeePolicy: { type: LateFeePolicySchema, default: undefined },
     notes: { type: String, default: "" },
+    actualizacionCadaMeses: { type: Number, default: 0 },
+    porcentajeActualizacion: { type: Number, default: 0 },
+    ajustes: { type: [AjusteSchema], default: [] },
+    commissionMonthlyPct: { type: Number, default: 0 },
+    commissionTotalPct: { type: Number, default: 0 },
   },
   { _id: false }
 );
 
-const ContractSchema = new Schema<ContractDoc>(
+const ScheduleItemSchema = new Schema(
   {
-    tenantId: { type: String, required: true, index: true },
+    period: { type: String, required: true }, // "2026-01"
+    dueDate: { type: String, required: true }, // "2026-01-08"
+    amount: { type: Number, required: true },
+    status: { type: String, enum: ["PENDING", "PAID"], default: "PENDING" },
+  },
+  { _id: false }
+);
+
+const ContractSchema = new Schema(
+  {
+    tenantId: { type: String, default: "default", index: true },
 
     code: { type: String, required: true, index: true },
+    status: {
+      type: String,
+      enum: ["DRAFT", "ACTIVE", "EXPIRING", "ENDED", "TERMINATED"],
+      default: "DRAFT",
+    },
 
     propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true },
     ownerId: { type: Schema.Types.ObjectId, ref: "Person", required: true },
     tenantPersonId: { type: Schema.Types.ObjectId, ref: "Person", required: true },
 
-    startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true },
+    // ✅ SIEMPRE string YYYY-MM-DD
+    startDate: { type: String, required: true }, // "2026-01-01"
+    endDate: { type: String, required: true }, // "2026-12-31"
 
-    duracionMeses: { type: Number, required: true, min: 1 },
-    montoBase: { type: Number, required: true, min: 0 },
+    duracionMeses: { type: Number, default: 0 },
+    montoBase: { type: Number, default: 0 },
+    dueDay: { type: Number, default: 10 },
+    currency: { type: String, default: "ARS" },
 
-    status: {
-      type: String,
-      enum: ["DRAFT", "ACTIVE", "EXPIRING", "ENDED", "TERMINATED"],
-      required: true,
-      default: "ACTIVE",
-      index: true,
-    },
+    actualizacionCadaMeses: { type: Number, default: 0 },
+    ajustes: { type: [AjusteSchema], default: [] },
+    lateFeePolicy: { type: LateFeePolicySchema, default: undefined },
 
-    billing: { type: BillingSchema, required: true },
+    billing: { type: BillingSchema, default: undefined },
 
-    // OJO: NO usamos `id` custom (eso fue lo que te generó index unique en null)
-    documents: { type: [Schema.Types.Mixed], required: true, default: [] },
+    schedule: { type: [ScheduleItemSchema], default: [] },
   },
   { timestamps: true }
 );
 
-// Unicidad por tenant + code (esto SI tiene sentido)
-ContractSchema.index({ tenantId: 1, code: 1 }, { unique: true });
+export type ContractDoc = InferSchemaType<typeof ContractSchema> & { _id: mongoose.Types.ObjectId };
 
-const Contract = mongoose.models.Contract || mongoose.model<ContractDoc>("Contract", ContractSchema);
-export default Contract;
+const ContractModel: Model<ContractDoc> =
+  (mongoose.models.Contract as Model<ContractDoc>) || mongoose.model<ContractDoc>("Contract", ContractSchema);
+
+export default ContractModel;

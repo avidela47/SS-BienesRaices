@@ -1,32 +1,7 @@
 import { connectDB } from "@/lib/db/connectDB";
-import { Contract } from "@/models/Contract";
+import Contract from "@/models/Contract";
 
-// 👇 tu archivo real está acá
-import { generateSchedule } from "@/app/contracts/generateSchedule";
-
-function isoDateOnly(v: unknown): string {
-  const s = String(v ?? "").trim();
-  // acepta "YYYY-MM-DD" o ISO largo, recorta 10
-  const d = s.slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(`Fecha inválida: ${s}`);
-  return d;
-}
-
-function addMonthsISO(startISO: string, months: number) {
-  const d = new Date(startISO + "T00:00:00Z");
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
-
-function toInt(v: unknown, def = 0) {
-  const n = Number(String(v ?? "").trim());
-  return Number.isFinite(n) ? Math.floor(n) : def;
-}
-
-function toNum(v: unknown, def = 0) {
-  const n = Number(String(v ?? "").trim());
-  return Number.isFinite(n) ? n : def;
-}
+const TENANT_ID = "default";
 
 export type CreateContractInput = {
   code?: string;
@@ -53,10 +28,32 @@ export type CreateContractInput = {
   };
 };
 
+function isoDateOnly(v: unknown): string {
+  const s = String(v ?? "").trim();
+  const d = s.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(`Fecha inválida: ${s}`);
+  return d;
+}
+
+function addMonthsISO(startISO: string, months: number) {
+  const d = new Date(startISO + "T00:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function toInt(v: unknown, def = 0) {
+  const n = Number(String(v ?? "").trim());
+  return Number.isFinite(n) ? Math.floor(n) : def;
+}
+
+function toNum(v: unknown, def = 0) {
+  const n = Number(String(v ?? "").trim());
+  return Number.isFinite(n) ? n : def;
+}
+
 export async function createContract(input: CreateContractInput) {
   await connectDB();
 
-  // ✅ fechas como string: nunca se corren
   const startDate = isoDateOnly(input.startDate);
 
   const duracionMeses = toInt(input.duracionMeses, 0);
@@ -69,18 +66,9 @@ export async function createContract(input: CreateContractInput) {
   if (dueDay < 1 || dueDay > 28) throw new Error("dueDay debe ser 1..28");
 
   const actualizacionCadaMeses = Math.max(0, toInt(input.actualizacionCadaMeses ?? 0, 0));
-  const pct = toNum(input.ajustes?.[0]?.percentage ?? 0, 0);
-
-  const schedule = generateSchedule({
-    startDateISO: startDate,
-    months: duracionMeses,
-    baseAmount: montoBase,
-    updateEveryMonths: actualizacionCadaMeses,
-    updatePercent: pct,
-    dueDay,
-  });
 
   const doc = await Contract.create({
+    tenantId: TENANT_ID,
     code: input.code || `CID-${Math.floor(Math.random() * 900 + 100)}`,
     status: "ACTIVE",
 
@@ -104,8 +92,6 @@ export async function createContract(input: CreateContractInput) {
       commissionMonthlyPct: toNum(input.billing?.commissionMonthlyPct ?? 0, 0),
       commissionTotalPct: toNum(input.billing?.commissionTotalPct ?? 0, 0),
     },
-
-    schedule,
   });
 
   return doc;
@@ -113,5 +99,14 @@ export async function createContract(input: CreateContractInput) {
 
 export async function listContracts() {
   await connectDB();
-  return Contract.find().sort({ createdAt: -1 }).lean();
+
+  // ✅ CLAVE: populate para que el front reciba objetos y no ObjectIds
+  const contracts = await Contract.find({ tenantId: TENANT_ID })
+    .populate("propertyId")
+    .populate("ownerId")
+    .populate("tenantPersonId")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return contracts;
 }
