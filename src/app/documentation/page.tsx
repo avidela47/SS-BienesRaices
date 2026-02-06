@@ -8,7 +8,7 @@ type PersonType = "OWNER" | "TENANT" | "GUARANTOR";
 type EntityType = PersonType | "PROPERTY" | "CONTRACT" | "PAYMENT" | "INSTALLMENT" | "AGENCY";
 
 type PersonDTO = {
-  _id: string;
+  _id: unknown;
   code?: string;
   type: string;
   fullName: string;
@@ -16,25 +16,25 @@ type PersonDTO = {
 };
 
 type PropertyDTO = {
-  _id: string;
+  _id: unknown;
   code?: string;
   addressLine: string;
   unit?: string;
 };
 
 type ContractDTO = {
-  _id: string;
+  _id: unknown;
   code?: string;
 };
 
 type PaymentDTO = {
-  _id: string;
+  _id: unknown;
   date: string;
   amount: number;
 };
 
 type InstallmentDTO = {
-  _id: string;
+  _id: unknown;
   period: string;
   amount: number;
 };
@@ -80,6 +80,17 @@ const DOC_TYPES_BY_ENTITY: Record<EntityType, string[]> = {
   INSTALLMENT: ["Recibo pago", "Otro"],
   AGENCY: ["Otro"],
 };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+// ✅ soporta: "65f0..." o { $oid: "65f0..." }
+function normalizeMongoId(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (isRecord(v) && typeof v["$oid"] === "string") return v["$oid"] as string;
+  return "";
+}
 
 function getErrorMessage(r: { ok: boolean; error?: string; message?: string } | undefined, fallback: string) {
   if (!r) return fallback;
@@ -145,49 +156,72 @@ export default function DocumentationPage() {
 
   const entityOptions = useMemo(() => {
     if (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR") {
-      return peopleForSelect.map((p) => ({
-        value: p._id,
-        label: p.code ? `${p.fullName} (${p.code})` : p.fullName,
-      }));
+      return peopleForSelect
+        .map((p) => {
+          const id = normalizeMongoId(p._id);
+          return {
+            value: id,
+            label: p.code ? `${p.fullName} (${p.code})` : p.fullName,
+          };
+        })
+        .filter((x) => x.value);
     }
 
     if (entityType === "PROPERTY") {
-      return properties.map((p) => ({
-        value: p._id,
-        label: `${p.code || ""} ${p.addressLine}${p.unit ? ` (${p.unit})` : ""}`.trim(),
-      }));
+      return properties
+        .map((p) => {
+          const id = normalizeMongoId(p._id);
+          return {
+            value: id,
+            label: `${p.code || ""} ${p.addressLine}${p.unit ? ` (${p.unit})` : ""}`.trim(),
+          };
+        })
+        .filter((x) => x.value);
     }
 
     if (entityType === "CONTRACT") {
-      return contracts.map((c) => ({
-        value: c._id,
-        label: c.code ?? c._id,
-      }));
+      return contracts
+        .map((c) => {
+          const id = normalizeMongoId(c._id);
+          return {
+            value: id,
+            label: c.code ?? id,
+          };
+        })
+        .filter((x) => x.value);
     }
 
     if (entityType === "PAYMENT") {
-      return payments.map((p) => ({
-        value: p._id,
-        label: `${new Date(p.date).toLocaleDateString("es-AR")} — ${p.amount.toLocaleString("es-AR", {
-          style: "currency",
-          currency: "ARS",
-        })}`,
-      }));
+      return payments
+        .map((p) => {
+          const id = normalizeMongoId(p._id);
+          return {
+            value: id,
+            label: `${new Date(p.date).toLocaleDateString("es-AR")} — ${p.amount.toLocaleString("es-AR", {
+              style: "currency",
+              currency: "ARS",
+            })}`,
+          };
+        })
+        .filter((x) => x.value);
     }
 
     if (entityType === "INSTALLMENT") {
-      return installments.map((i) => ({
-        value: i._id,
-        label: `${i.period} — ${i.amount.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}`,
-      }));
+      return installments
+        .map((i) => {
+          const id = normalizeMongoId(i._id);
+          return {
+            value: id,
+            label: `${i.period} — ${i.amount.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}`,
+          };
+        })
+        .filter((x) => x.value);
     }
 
     return [];
   }, [entityType, peopleForSelect, properties, contracts, payments, installments]);
 
   async function loadPeople() {
-    // Traemos todo /api/people y filtramos en front para no tocar backend ahora
-    // (si ya tenés /api/people?type=..., después lo optimizamos)
     if (isAgency) {
       setPeople([]);
       return;
@@ -280,7 +314,6 @@ export default function DocumentationPage() {
   }, []);
 
   useEffect(() => {
-    // Al cambiar tipo, reseteamos selección de persona
     setEntityId("");
     setFile(null);
     setNotes("");
@@ -307,8 +340,8 @@ export default function DocumentationPage() {
 
       const form = new FormData();
       form.append("entityType", entityType);
-  if (!isAgency) form.append("entityId", entityId);
-  if (docType) form.append("docType", docType);
+      if (!isAgency) form.append("entityId", entityId);
+      if (docType) form.append("docType", docType);
       if (notes.trim()) form.append("notes", notes.trim());
       form.append("file", file);
 
@@ -324,7 +357,6 @@ export default function DocumentationPage() {
       setFile(null);
       setNotes("");
 
-      // Recargar listado
       if (entityType === "AGENCY") {
         await loadDocs("AGENCY", "");
       } else {
@@ -358,9 +390,10 @@ export default function DocumentationPage() {
         } else {
           show(getErrorMessage(data, "No se pudo eliminar"));
         }
+      } else {
+        show("Documento eliminado");
       }
 
-      show("Documento eliminado");
       if (entityType === "AGENCY") {
         await loadDocs("AGENCY", "");
       } else {
@@ -373,24 +406,20 @@ export default function DocumentationPage() {
     }
   }
 
-
   return (
     <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Documentación</h1>
             <p className="text-sm opacity-70">Escaneo / subida y organización de documentos</p>
           </div>
 
-
           <div className="flex items-center gap-2">
             <BackButton />
           </div>
         </div>
 
-        {/* Selector de carpeta */}
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
           <div className="border-b border-white/10 px-5 py-4">
             <div className="text-sm font-semibold">Subida</div>
@@ -405,14 +434,14 @@ export default function DocumentationPage() {
                   onChange={(e) => setEntityType(e.target.value as EntityType)}
                   className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
                 >
-                <option value="OWNER">Propietarios</option>
-                <option value="TENANT">Inquilinos</option>
-                <option value="GUARANTOR">Garantes</option>
-                <option value="PROPERTY">Propiedades</option>
-                <option value="CONTRACT">Contratos</option>
-                <option value="PAYMENT">Pagos</option>
-                <option value="INSTALLMENT">Cuotas</option>
-                <option value="AGENCY">Inmobiliaria</option>
+                  <option value="OWNER">Propietarios</option>
+                  <option value="TENANT">Inquilinos</option>
+                  <option value="GUARANTOR">Garantes</option>
+                  <option value="PROPERTY">Propiedades</option>
+                  <option value="CONTRACT">Contratos</option>
+                  <option value="PAYMENT">Pagos</option>
+                  <option value="INSTALLMENT">Cuotas</option>
+                  <option value="AGENCY">Inmobiliaria</option>
                 </select>
               </div>
 
@@ -430,22 +459,21 @@ export default function DocumentationPage() {
                     disabled={peopleLoading && (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR")}
                     className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
                   >
-                  <option value="">
-                    {peopleLoading && (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR")
-                      ? "Cargando..."
-                      : `Seleccionar ${typeLabel(entityType).toLowerCase().slice(0, -1)}`}
-                  </option>
-                  {entityOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
+                    <option value="">
+                      {peopleLoading && (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR")
+                        ? "Cargando..."
+                        : `Seleccionar ${typeLabel(entityType).toLowerCase().slice(0, -1)}`}
                     </option>
-                  ))}
+                    {entityOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 )}
               </div>
             </div>
 
-            {/* Subida */}
             <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div className="md:col-span-2">
                 <label className="text-xs text-white/50">Archivo</label>
@@ -510,7 +538,6 @@ export default function DocumentationPage() {
           </div>
         </div>
 
-        {/* Listado */}
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
           <div className="px-5 py-4 border-b border-white/10 text-sm font-semibold">
             Documentos {docsLoading ? "(cargando…)" : `(${docs.length})`}
@@ -535,17 +562,9 @@ export default function DocumentationPage() {
 
                 <div>
                   {docs.map((d) => (
-                    <div
-                      key={d._id}
-                      className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start"
-                    >
+                    <div key={d._id} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start">
                       <div className="col-span-5">
-                        <a
-                          href={d.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="font-semibold hover:underline"
-                        >
+                        <a href={d.url} target="_blank" rel="noreferrer" className="font-semibold hover:underline">
                           {d.originalName}
                         </a>
                         <div className="text-xs opacity-60 mt-0.5">{new Date(d.createdAt).toLocaleString()}</div>
@@ -566,7 +585,7 @@ export default function DocumentationPage() {
                           href={d.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition relative z-10 pointer-events-auto"
+                          className="inline-flex items-center cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition"
                         >
                           Imprimir
                         </a>
@@ -586,7 +605,6 @@ export default function DocumentationPage() {
             )}
           </div>
         </div>
-
       </div>
     </main>
   );

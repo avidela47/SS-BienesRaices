@@ -10,6 +10,24 @@ type Summary = {
   byType: Record<string, number>;
 };
 
+type ContractLite = {
+  _id: unknown;
+  code?: string;
+  status?: string;
+  propertyId?: unknown;
+  ownerId?: unknown;
+  tenantPersonId?: unknown;
+};
+
+type ContractsListResponse =
+  | { ok: true; contracts: ContractLite[] }
+  | { ok: false; error?: string; message?: string };
+
+type ContractPick = {
+  _id: string;
+  label: string;
+};
+
 const DEFAULT_SUMMARY: Summary = { total: 0, byStatus: {}, byType: {} };
 
 function formatCurrency(value: number, currency = "ARS") {
@@ -49,23 +67,86 @@ const PARTY_LABELS: Record<string, string> = {
   OTHER: "Otro",
 };
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function safeStr(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMongoId(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (isRecord(v)) {
+    const oid = v["$oid"];
+    if (typeof oid === "string") return oid;
+    const oid2 = v["oid"];
+    if (typeof oid2 === "string") return oid2;
+    const id = v["_id"];
+    if (typeof id === "string") return id;
+    if (isRecord(id) && typeof id["$oid"] === "string") return id["$oid"] as string;
+  }
+  return "";
+}
+
+function isValidObjectId(id: string): boolean {
+  return /^[a-fA-F0-9]{24}$/.test(id);
+}
+
+function buildContractLabel(c: ContractLite): string {
+  const code = safeStr(c.code);
+
+  const propObj = isRecord(c.propertyId) ? c.propertyId : null;
+  const propCode = propObj ? safeStr(propObj["code"]) : "";
+  const addressLine = propObj ? safeStr(propObj["addressLine"]) : "";
+  const unit = propObj ? safeStr(propObj["unit"]) : "";
+
+  const prop =
+    propCode || addressLine
+      ? `${propCode}${propCode && addressLine ? " - " : ""}${addressLine}${unit ? ` ${unit}` : ""}`
+      : "";
+
+  const tenantObj = isRecord(c.tenantPersonId) ? c.tenantPersonId : null;
+  const tenant = tenantObj ? safeStr(tenantObj["fullName"]) : "";
+
+  const parts = [code, prop, tenant].filter(Boolean);
+  return parts.join(" — ") || code || "Contrato";
+}
+
 export default function CashPage() {
   const [movements, setMovements] = useState<CashMovementDTO[]>([]);
   const [summary, setSummary] = useState<Summary>(DEFAULT_SUMMARY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [manualContractId, setManualContractId] = useState("");
+
+  const [pickedContract, setPickedContract] = useState<ContractPick | null>(null);
+  const [contractsCache, setContractsCache] = useState<ContractPick[]>([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsErr, setContractsErr] = useState("");
+
   const [manualType, setManualType] = useState("INCOME");
   const [manualStatus, setManualStatus] = useState("COLLECTED");
   const [manualAmount, setManualAmount] = useState("");
   const [manualSubtype, setManualSubtype] = useState("");
   const [manualPartyType, setManualPartyType] = useState("AGENCY");
-  const [manualPartyId, setManualPartyId] = useState("");
   const [manualNotes, setManualNotes] = useState("");
+
+  const [manualFiles, setManualFiles] = useState<File[]>([]);
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [manualMessage, setManualMessage] = useState("");
+
   const [transferingId, setTransferingId] = useState("");
   const [viewMode, setViewMode] = useState<"summary" | "detail">("summary");
 
@@ -80,11 +161,9 @@ export default function CashPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/cash-movements${filteredQuery ? `?${filteredQuery}` : ""}`);
+      const res = await fetch(`/api/cash-movements${filteredQuery ? `?${filteredQuery}` : ""}`, { cache: "no-store" });
       const data = (await res.json()) as { ok?: boolean; movements?: CashMovementDTO[]; summary?: Summary; error?: string };
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "No se pudo cargar la caja");
-      }
+      if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo cargar la caja");
       setMovements(data.movements || []);
       setSummary(data.summary || DEFAULT_SUMMARY);
     } catch (err) {
@@ -124,43 +203,128 @@ export default function CashPage() {
         commission,
         expense,
         status: ownerNetMovement?.status || sorted[0]?.status || "",
-        transferId: ownerNetMovement?._id,
+        transferId: ownerNetMovement?._id as string | undefined,
       };
     });
   }, [movements]);
 
+  async function loadContracts(force = false) {
+    if (!force && contractsCache.length > 0) return;
+
+    setContractsLoading(true);
+    setContractsErr("");
+    try {
+      const res = await fetch("/api/contracts", { cache: "no-store" });
+      const data = (await res.json()) as ContractsListResponse;
+
+      if (!res.ok || !data.ok) {
+        const msg = !data.ok ? data.error || data.message || "No se pudo cargar contratos" : "No se pudo cargar contratos";
+        throw new Error(msg);
+      }
+
+      const picks: ContractPick[] = (data.contracts || [])
+        .map((c) => {
+          const id = normalizeMongoId(c._id);
+          return { _id: id, label: buildContractLabel(c) };
+        })
+        .filter((c) => isValidObjectId(c._id));
+
+      setContractsCache(picks);
+
+      if (picks.length === 0) {
+        setPickedContract(null);
+        setContractsErr("No llegaron contratos con _id válido (ObjectId). Revisar /api/contracts.");
+      }
+    } catch (e) {
+      setPickedContract(null);
+      setContractsErr(e instanceof Error ? e.message : "Error cargando contratos");
+    } finally {
+      setContractsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadContracts(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function uploadContractFile(contractId: string, file: File, movementId?: string) {
+    if (!isValidObjectId(contractId)) throw new Error(`contractId inválido: "${contractId}"`);
+
+    const form = new FormData();
+    form.append("file", file);
+    if (movementId) form.append("movementId", movementId);
+    form.append("uploadedBy", "cash");
+
+    const res = await fetch(`/api/contracts/${contractId}/files`, { method: "POST", body: form });
+
+    const text = await res.text();
+    const json = parseJsonRecord(text);
+
+    const ok = json?.["ok"] === true;
+    if (!res.ok || !ok) {
+      const msg =
+        (typeof json?.["error"] === "string" ? (json["error"] as string) : "") ||
+        text ||
+        "No se pudo adjuntar comprobante";
+      throw new Error(msg);
+    }
+  }
+
   async function submitManualMovement() {
     setManualSubmitting(true);
     setManualMessage("");
+
     try {
       const amount = Number(manualAmount);
-      if (!manualContractId || !Number.isFinite(amount) || amount <= 0) {
-        throw new Error("Completá contrato y monto válido");
-      }
+      const contractId = pickedContract?._id || "";
+
+      if (!contractId) throw new Error("Elegí un contrato");
+      if (!isValidObjectId(contractId)) throw new Error(`Contrato inválido (no es ObjectId): "${contractId}"`);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Ingresá un monto válido");
 
       const res = await fetch("/api/cash-movements/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contractId: manualContractId.trim(),
+          contractId,
           type: manualType,
           status: manualStatus,
           amount,
           subtype: manualSubtype.trim(),
           partyType: manualPartyType,
-          partyId: manualPartyId.trim() || undefined,
           notes: manualNotes.trim(),
         }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "No se pudo crear el movimiento");
+
+      const dataText = await res.text();
+      const data = parseJsonRecord(dataText);
+
+      const ok = data?.["ok"] === true;
+      if (!res.ok || !ok) {
+        const msg = (typeof data?.["error"] === "string" ? (data["error"] as string) : "") || dataText || "No se pudo crear el movimiento";
+        throw new Error(msg);
+      }
+
+      const movementId =
+        typeof data?.["movementId"] === "string"
+          ? (data["movementId"] as string)
+          : isRecord(data?.["movement"]) && typeof (data["movement"] as Record<string, unknown>)["_id"] === "string"
+            ? ((data["movement"] as Record<string, unknown>)["_id"] as string)
+            : undefined;
+
+      if (manualFiles.length > 0) {
+        for (const f of manualFiles) {
+          await uploadContractFile(contractId, f, movementId);
+        }
       }
 
       setManualMessage("Movimiento creado");
       setManualAmount("");
       setManualSubtype("");
       setManualNotes("");
+      setManualFiles([]);
+
       await load();
     } catch (err) {
       setManualMessage(err instanceof Error ? err.message : "Error desconocido");
@@ -178,9 +342,7 @@ export default function CashPage() {
         body: JSON.stringify({ transferredBy: "system" }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "No se pudo transferir");
-      }
+      if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo transferir");
       await load();
     } catch (err) {
       setManualMessage(err instanceof Error ? err.message : "Error desconocido");
@@ -199,7 +361,6 @@ export default function CashPage() {
               Resumen de caja conectado a movimientos reales.
             </p>
           </div>
-
           <BackButton />
         </div>
 
@@ -220,34 +381,65 @@ export default function CashPage() {
               style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
             >
               <div className="text-xs uppercase tracking-wide text-white/60">{item.label}</div>
-              <div className="text-xl font-semibold mt-2">
-                {formatCurrency(summary.byStatus[item.key] || 0)}
-              </div>
+              <div className="text-xl font-semibold mt-2">{formatCurrency(summary.byStatus[item.key] || 0)}</div>
             </div>
           ))}
         </div>
 
-        <div
-          className="mt-6 rounded-2xl border p-6"
-          style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
-        >
+        <div className="mt-6 rounded-2xl border p-6" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
+          {/* MOVIMIENTO MANUAL */}
           <div className="mb-6 rounded-xl border border-white/10 p-4 bg-white/5">
-            <h2 className="text-base font-semibold">Movimiento manual</h2>
-            <p className="text-xs text-white/60 mt-1">
-              Registrá gastos o ingresos no automáticos (luz, gas, expensas, reparaciones, aportes, etc.).
-            </p>
-
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-6 gap-3">
-              <div className="md:col-span-2">
-                <label className="text-xs text-white/60">Contrato (ID)</label>
-                <input
-                  value={manualContractId}
-                  onChange={(e) => setManualContractId(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
-                  placeholder="ObjectId del contrato"
-                />
-              </div>
+            <div className="flex items-center justify-between gap-3">
               <div>
+                <h2 className="text-base font-semibold">Movimiento manual</h2>
+                <p className="text-xs text-white/60 mt-1">Registrá gastos o ingresos no automáticos.</p>
+              </div>
+
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 transition disabled:opacity-60"
+                onClick={() => {
+                  setPickedContract(null);
+                  setManualFiles([]);
+                  void loadContracts(true);
+                }}
+                disabled={contractsLoading}
+                title="Recargar contratos"
+              >
+                {contractsLoading ? "Recargando..." : "Recargar"}
+              </button>
+            </div>
+
+            <div className="mt-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-white/60 mb-1">Contrato</div>
+                {contractsErr ? <div className="text-xs text-red-300">{contractsErr}</div> : null}
+              </div>
+
+              <select
+                value={pickedContract?._id || ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const found = contractsCache.find((c) => c._id === id) || null;
+                  setPickedContract(found);
+                }}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none"
+              >
+                <option value="" disabled>
+                  {contractsLoading ? "Cargando contratos..." : "Seleccionar contrato..."}
+                </option>
+                {contractsCache.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+
+              <div className="mt-2 text-[11px] text-white/50">{pickedContract ? `ID: ${pickedContract._id}` : "—"}</div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-7 gap-3">
+              <div className="md:col-span-1">
                 <label className="text-xs text-white/60">Tipo</label>
                 <select
                   value={manualType}
@@ -261,7 +453,8 @@ export default function CashPage() {
                   ))}
                 </select>
               </div>
-              <div>
+
+              <div className="md:col-span-1">
                 <label className="text-xs text-white/60">Estado</label>
                 <select
                   value={manualStatus}
@@ -275,7 +468,8 @@ export default function CashPage() {
                   ))}
                 </select>
               </div>
-              <div>
+
+              <div className="md:col-span-1">
                 <label className="text-xs text-white/60">Monto</label>
                 <input
                   value={manualAmount}
@@ -286,7 +480,8 @@ export default function CashPage() {
                   placeholder="0"
                 />
               </div>
-              <div>
+
+              <div className="md:col-span-2">
                 <label className="text-xs text-white/60">Subtipo</label>
                 <input
                   value={manualSubtype}
@@ -295,7 +490,8 @@ export default function CashPage() {
                   placeholder="LUZ / GAS / EXPENSA"
                 />
               </div>
-              <div>
+
+              <div className="md:col-span-1">
                 <label className="text-xs text-white/60">Imputar a</label>
                 <select
                   value={manualPartyType}
@@ -309,16 +505,52 @@ export default function CashPage() {
                   ))}
                 </select>
               </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-white/60">Party ID (opcional)</label>
-                <input
-                  value={manualPartyId}
-                  onChange={(e) => setManualPartyId(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
-                  placeholder="ObjectId del propietario/garante"
-                />
+
+              {/* ✅ Comprobantes con cursor SI O SI (label-botón) */}
+              <div className="md:col-span-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-white/60 cursor-pointer select-none">Comprobantes (PDF/JPG/PNG)</label>
+                  {manualFiles.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setManualFiles([])}
+                      className="text-[11px] text-white/60 hover:text-white cursor-pointer underline"
+                    >
+                      limpiar
+                    </button>
+                  ) : null}
+                </div>
+
+                <label className="mt-1 flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 transition cursor-pointer">
+                  Elegir archivos
+                  <input
+                    type="file"
+                    multiple
+                    accept="application/pdf,image/png,image/jpeg"
+                    onChange={(e) => setManualFiles(Array.from(e.target.files || []))}
+                    className="hidden"
+                  />
+                </label>
+
+                <div className="mt-1 text-[11px] text-white/50">
+                  {manualFiles.length > 0 ? `${manualFiles.length} archivo(s) seleccionado(s)` : "—"}
+                </div>
               </div>
-              <div className="md:col-span-4">
+
+              {manualFiles.length > 0 ? (
+                <div className="md:col-span-7 rounded-xl border border-white/10 bg-black/30 p-3">
+                  <div className="text-xs text-white/60 mb-2">Archivos:</div>
+                  <ul className="space-y-1">
+                    {manualFiles.map((f) => (
+                      <li key={`${f.name}-${f.size}-${f.lastModified}`} className="text-xs text-white/80 truncate">
+                        • {f.name}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <div className="md:col-span-7">
                 <label className="text-xs text-white/60">Notas</label>
                 <input
                   value={manualNotes}
@@ -338,6 +570,7 @@ export default function CashPage() {
               >
                 {manualSubmitting ? "Guardando..." : "Guardar movimiento"}
               </button>
+
               {manualMessage ? (
                 <span className={manualMessage === "Movimiento creado" ? "text-emerald-300 text-xs" : "text-red-300 text-xs"}>
                   {manualMessage}
@@ -346,6 +579,7 @@ export default function CashPage() {
             </div>
           </div>
 
+          {/* LISTADO MOVIMIENTOS */}
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div>
               <h2 className="text-lg font-semibold">Movimientos</h2>
@@ -357,9 +591,7 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("summary")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "summary"
-                    ? "border-emerald-400/40 bg-emerald-400/10"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "summary" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Resumen
@@ -368,9 +600,7 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("detail")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "detail"
-                    ? "border-emerald-400/40 bg-emerald-400/10"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "detail" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Detalle
@@ -425,40 +655,39 @@ export default function CashPage() {
                 <div className="col-span-1 text-right">Acc.</div>
               </div>
 
-              {groupedRows.map((row) => (
-                <div key={row.key} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10">
-                  <div className="col-span-2 text-white/80">{row.date ? formatDate(row.date) : "—"}</div>
-                  <div className="col-span-2 text-white/70 truncate" title={row.contractLabel}>
-                    {row.contractLabel || "—"}
+              {groupedRows.map((row) => {
+                const canTransfer = row.status === "READY_TO_TRANSFER" && typeof row.transferId === "string" && row.transferId.length > 0;
+                const transferId = canTransfer ? row.transferId : null;
+
+                return (
+                  <div key={row.key} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10">
+                    <div className="col-span-2 text-white/80">{row.date ? formatDate(row.date) : "—"}</div>
+                    <div className="col-span-2 text-white/70 truncate" title={row.contractLabel}>
+                      {row.contractLabel || "—"}
+                    </div>
+                    <div className="col-span-2 text-white/70 truncate" title={row.propertyLabel}>
+                      {row.propertyLabel || "—"}
+                    </div>
+                    <div className="col-span-2 font-semibold">{row.income ? formatCurrency(row.income) : "—"}</div>
+                    <div className="col-span-2 text-white/80">{row.commission ? formatCurrency(row.commission) : "—"}</div>
+                    <div className="col-span-1 text-white/80">{row.expense ? formatCurrency(row.expense) : "—"}</div>
+                    <div className="col-span-1 flex justify-end">
+                      {transferId ? (
+                        <button
+                          type="button"
+                          onClick={() => void transferMovement(transferId)}
+                          disabled={transferingId === transferId}
+                          className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-xs hover:bg-emerald-400/20 disabled:opacity-60"
+                        >
+                          {transferingId === transferId ? "..." : "Transferir"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-white/40">—</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="col-span-2 text-white/70 truncate" title={row.propertyLabel}>
-                    {row.propertyLabel || "—"}
-                  </div>
-                  <div className="col-span-2 font-semibold">
-                    {row.income ? formatCurrency(row.income) : "—"}
-                  </div>
-                  <div className="col-span-2 text-white/80">
-                    {row.commission ? formatCurrency(row.commission) : "—"}
-                  </div>
-                  <div className="col-span-1 text-white/80">
-                    {row.expense ? formatCurrency(row.expense) : "—"}
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    {row.status === "READY_TO_TRANSFER" && row.transferId ? (
-                      <button
-                        type="button"
-                        onClick={() => void transferMovement(row.transferId!)}
-                        disabled={transferingId === row.transferId}
-                        className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-xs hover:bg-emerald-400/20 disabled:opacity-60"
-                      >
-                        {transferingId === row.transferId ? "..." : "Transferir"}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-white/40">—</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
@@ -474,20 +703,11 @@ export default function CashPage() {
               </div>
 
               {movements.map((movement) => (
-                <div
-                  key={movement._id}
-                  className="grid grid-cols-15 px-4 py-3 text-sm border-t border-white/10"
-                >
+                <div key={movement._id} className="grid grid-cols-15 px-4 py-3 text-sm border-t border-white/10">
                   <div className="col-span-2 text-white/80">{formatDate(movement.date)}</div>
-                  <div className="col-span-2 text-white/90 font-semibold">
-                    {TYPE_LABELS[movement.type] || movement.type}
-                  </div>
-                  <div className="col-span-2 text-white/70">
-                    {STATUS_LABELS[movement.status] || movement.status}
-                  </div>
-                  <div className="col-span-2 font-semibold">
-                    {formatCurrency(movement.amount, movement.currency || "ARS")}
-                  </div>
+                  <div className="col-span-2 text-white/90 font-semibold">{TYPE_LABELS[movement.type] || movement.type}</div>
+                  <div className="col-span-2 text-white/70">{STATUS_LABELS[movement.status] || movement.status}</div>
+                  <div className="col-span-2 font-semibold">{formatCurrency(movement.amount, movement.currency || "ARS")}</div>
                   <div className="col-span-2 text-white/60">
                     {movement.partyType ? PARTY_LABELS[movement.partyType] || movement.partyType : "—"}
                   </div>
@@ -520,3 +740,4 @@ export default function CashPage() {
     </main>
   );
 }
+

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import path from "path";
 import { promises as fs } from "fs";
+import mongoose from "mongoose";
 
 import { dbConnect } from "@/lib/mongoose";
 import Document from "@/models/Document";
-import mongoose from "mongoose";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,6 @@ export async function DELETE(
       return NextResponse.json({ ok: false, message: "Documento no encontrado" }, { status: 404 });
     }
 
-    // Borramos archivo físico (si existe)
     try {
       const diskPath = path.join(UPLOADS_DIR, doc.storedName);
       await fs.unlink(diskPath);
