@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import BackButton from "@/app/components/BackButton";
 import type { CashMovementDTO } from "@/lib/types";
 
@@ -84,6 +84,15 @@ function parseJsonRecord(text: string): Record<string, unknown> | null {
   }
 }
 
+function getErrFromApiResponse(r: unknown, fallback: string) {
+  if (!isRecord(r)) return fallback;
+  const e = r["error"];
+  const m = r["message"];
+  if (typeof m === "string" && m.trim()) return m;
+  if (typeof e === "string" && e.trim()) return e;
+  return fallback;
+}
+
 function normalizeMongoId(v: unknown): string {
   if (typeof v === "string") return v;
   if (isRecord(v)) {
@@ -136,6 +145,8 @@ export default function CashPage() {
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractsErr, setContractsErr] = useState("");
 
+  const [contractSearch, setContractSearch] = useState("");
+
   const [manualType, setManualType] = useState("INCOME");
   const [manualStatus, setManualStatus] = useState("COLLECTED");
   const [manualAmount, setManualAmount] = useState("");
@@ -149,6 +160,9 @@ export default function CashPage() {
 
   const [transferingId, setTransferingId] = useState("");
   const [viewMode, setViewMode] = useState<"summary" | "detail">("summary");
+
+  // ✅ cuando el usuario aprieta "Recargar", queremos elegir SIEMPRE el primero
+  const forcePickFirstRef = useRef(false);
 
   const filteredQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -203,7 +217,7 @@ export default function CashPage() {
         commission,
         expense,
         status: ownerNetMovement?.status || sorted[0]?.status || "",
-        transferId: ownerNetMovement?._id as string | undefined,
+        transferId: typeof ownerNetMovement?._id === "string" ? ownerNetMovement._id : undefined,
       };
     });
   }, [movements]);
@@ -218,8 +232,7 @@ export default function CashPage() {
       const data = (await res.json()) as ContractsListResponse;
 
       if (!res.ok || !data.ok) {
-        const msg = !data.ok ? data.error || data.message || "No se pudo cargar contratos" : "No se pudo cargar contratos";
-        throw new Error(msg);
+        throw new Error(getErrFromApiResponse(data, "No se pudo cargar contratos"));
       }
 
       const picks: ContractPick[] = (data.contracts || [])
@@ -234,10 +247,26 @@ export default function CashPage() {
       if (picks.length === 0) {
         setPickedContract(null);
         setContractsErr("No llegaron contratos con _id válido (ObjectId). Revisar /api/contracts.");
+        forcePickFirstRef.current = false;
+        return;
       }
+
+      // ✅ si venís de "Recargar", elegí SIEMPRE el primero, sin rescatar el anterior
+      if (forcePickFirstRef.current) {
+        setPickedContract(picks[0]);
+        forcePickFirstRef.current = false;
+        return;
+      }
+
+      // ✅ caso normal: mantener selección si existe; si no, elegir primero
+      setPickedContract((prev) => {
+        if (prev && isValidObjectId(prev._id) && picks.some((p) => p._id === prev._id)) return prev;
+        return picks[0];
+      });
     } catch (e) {
       setPickedContract(null);
       setContractsErr(e instanceof Error ? e.message : "Error cargando contratos");
+      forcePickFirstRef.current = false;
     } finally {
       setContractsLoading(false);
     }
@@ -247,6 +276,12 @@ export default function CashPage() {
     void loadContracts(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const filteredContracts = useMemo(() => {
+    const q = contractSearch.trim().toLowerCase();
+    if (!q) return contractsCache;
+    return contractsCache.filter((c) => c.label.toLowerCase().includes(q) || c._id.toLowerCase().includes(q));
+  }, [contractsCache, contractSearch]);
 
   async function uploadContractFile(contractId: string, file: File, movementId?: string) {
     if (!isValidObjectId(contractId)) throw new Error(`contractId inválido: "${contractId}"`);
@@ -264,7 +299,7 @@ export default function CashPage() {
     const ok = json?.["ok"] === true;
     if (!res.ok || !ok) {
       const msg =
-        (typeof json?.["error"] === "string" ? (json["error"] as string) : "") ||
+        (json && typeof json["error"] === "string" ? (json["error"] as string) : "") ||
         text ||
         "No se pudo adjuntar comprobante";
       throw new Error(msg);
@@ -302,12 +337,15 @@ export default function CashPage() {
 
       const ok = data?.["ok"] === true;
       if (!res.ok || !ok) {
-        const msg = (typeof data?.["error"] === "string" ? (data["error"] as string) : "") || dataText || "No se pudo crear el movimiento";
+        const msg =
+          (data && typeof data["error"] === "string" ? (data["error"] as string) : "") ||
+          dataText ||
+          "No se pudo crear el movimiento";
         throw new Error(msg);
       }
 
       const movementId =
-        typeof data?.["movementId"] === "string"
+        data && typeof data["movementId"] === "string"
           ? (data["movementId"] as string)
           : isRecord(data?.["movement"]) && typeof (data["movement"] as Record<string, unknown>)["_id"] === "string"
             ? ((data["movement"] as Record<string, unknown>)["_id"] as string)
@@ -351,6 +389,8 @@ export default function CashPage() {
     }
   }
 
+  const canSaveManual = !!pickedContract && isValidObjectId(pickedContract._id) && !manualSubmitting;
+
   return (
     <main className="min-h-screen px-5 py-10 text-white" style={{ background: "var(--background)" }}>
       <div className="mx-auto max-w-6xl">
@@ -365,7 +405,10 @@ export default function CashPage() {
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="rounded-2xl border p-4" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
+          <div
+            className="rounded-2xl border p-4"
+            style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
+          >
             <div className="text-xs uppercase tracking-wide text-white/60">Total caja</div>
             <div className="text-2xl font-semibold mt-2">{formatCurrency(summary.total)}</div>
           </div>
@@ -386,7 +429,10 @@ export default function CashPage() {
           ))}
         </div>
 
-        <div className="mt-6 rounded-2xl border p-6" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
+        <div
+          className="mt-6 rounded-2xl border p-6"
+          style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
+        >
           {/* MOVIMIENTO MANUAL */}
           <div className="mb-6 rounded-xl border border-white/10 p-4 bg-white/5">
             <div className="flex items-center justify-between gap-3">
@@ -399,6 +445,9 @@ export default function CashPage() {
                 type="button"
                 className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 transition disabled:opacity-60"
                 onClick={() => {
+                  // ✅ reset TOTAL
+                  forcePickFirstRef.current = true; // ✅ al volver, elegir primero sí o sí
+                  setContractSearch("");
                   setPickedContract(null);
                   setManualFiles([]);
                   void loadContracts(true);
@@ -416,6 +465,13 @@ export default function CashPage() {
                 {contractsErr ? <div className="text-xs text-red-300">{contractsErr}</div> : null}
               </div>
 
+              <input
+                value={contractSearch}
+                onChange={(e) => setContractSearch(e.target.value)}
+                placeholder="Buscar contrato..."
+                className="mb-2 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none"
+              />
+
               <select
                 value={pickedContract?._id || ""}
                 onChange={(e) => {
@@ -428,14 +484,15 @@ export default function CashPage() {
                 <option value="" disabled>
                   {contractsLoading ? "Cargando contratos..." : "Seleccionar contrato..."}
                 </option>
-                {contractsCache.map((c) => (
+
+                {filteredContracts.map((c) => (
                   <option key={c._id} value={c._id}>
                     {c.label}
                   </option>
                 ))}
               </select>
 
-              <div className="mt-2 text-[11px] text-white/50">{pickedContract ? `ID: ${pickedContract._id}` : "—"}</div>
+              {/* ✅ ID oculto: eliminado */}
             </div>
 
             <div className="mt-3 grid grid-cols-1 md:grid-cols-7 gap-3">
@@ -506,7 +563,7 @@ export default function CashPage() {
                 </select>
               </div>
 
-              {/* ✅ Comprobantes con cursor SI O SI (label-botón) */}
+              {/* ✅ Comprobantes (cursor pointer real) */}
               <div className="md:col-span-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs text-white/60 cursor-pointer select-none">Comprobantes (PDF/JPG/PNG)</label>
@@ -565,8 +622,9 @@ export default function CashPage() {
               <button
                 type="button"
                 onClick={() => void submitManualMovement()}
-                disabled={manualSubmitting}
+                disabled={!canSaveManual}
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs hover:bg-white/10 transition disabled:opacity-60"
+                title={!pickedContract ? "Elegí un contrato" : ""}
               >
                 {manualSubmitting ? "Guardando..." : "Guardar movimiento"}
               </button>
@@ -591,7 +649,9 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("summary")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "summary" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "summary"
+                    ? "border-emerald-400/40 bg-emerald-400/10"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Resumen
@@ -600,7 +660,9 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("detail")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "detail" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "detail"
+                    ? "border-emerald-400/40 bg-emerald-400/10"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Detalle
@@ -740,4 +802,5 @@ export default function CashPage() {
     </main>
   );
 }
+
 

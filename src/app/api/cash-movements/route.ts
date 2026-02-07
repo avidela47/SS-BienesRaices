@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbConnect } from "@/lib/mongoose";
 import { CashMovement, type CashMovementStatus, type CashMovementType } from "@/models/CashMovement";
 
+// ✅ REGISTRA MODELOS PARA POPULATE EN ESTE RUNTIME
+import "@/models/Property";
+import "@/models/Contract";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const TENANT_ID = "default";
 
 function getErrorMessage(err: unknown): string {
@@ -59,9 +67,7 @@ export async function GET(req: NextRequest) {
 
       const contractLabel = contract?.code || (contract?._id ? String(contract._id) : "");
       const addressParts = [property?.addressLine, property?.unit, property?.city].filter(Boolean);
-      const propertyLabel = property?.code
-        ? `${property.code} · ${addressParts.join(" ")}`
-        : addressParts.join(" ");
+      const propertyLabel = property?.code ? `${property.code} · ${addressParts.join(" ")}` : addressParts.join(" ");
 
       return {
         ...movement,
@@ -70,20 +76,19 @@ export async function GET(req: NextRequest) {
       };
     });
 
-  const summary = withDisplay.reduce(
+    const summary = withDisplay.reduce(
       (acc, m) => {
         const amount = typeof m.amount === "number" ? m.amount : 0;
-        const status = m.status as CashMovementStatus;
-        const type = m.type as CashMovementType;
+        const st = m.status as CashMovementStatus;
+        const tp = m.type as CashMovementType;
 
         // Total caja = dinero efectivamente ingresado (sin contar pasivos READY_TO_TRANSFER)
-        if ((status === "COLLECTED" || status === "RETAINED") && type !== "EXPENSE") {
+        if ((st === "COLLECTED" || st === "RETAINED") && tp !== "EXPENSE") {
           acc.total += amount;
         }
-        acc.byStatus[m.status as CashMovementStatus] =
-          (acc.byStatus[m.status as CashMovementStatus] || 0) + amount;
-        acc.byType[m.type as CashMovementType] =
-          (acc.byType[m.type as CashMovementType] || 0) + amount;
+
+        acc.byStatus[st] = (acc.byStatus[st] || 0) + amount;
+        acc.byType[tp] = (acc.byType[tp] || 0) + amount;
         return acc;
       },
       {
@@ -93,7 +98,7 @@ export async function GET(req: NextRequest) {
       }
     );
 
-  return NextResponse.json({ ok: true, movements: withDisplay, summary });
+    return NextResponse.json({ ok: true, movements: withDisplay, summary });
   } catch (err: unknown) {
     return NextResponse.json(
       { ok: false, error: `Failed to fetch cash movements: ${getErrorMessage(err)}` },
@@ -125,12 +130,8 @@ export async function POST(req: NextRequest) {
       createdBy?: string;
     }>;
 
-    if (!body.type) {
-      return NextResponse.json({ ok: false, error: "type required" }, { status: 400 });
-    }
-    if (!body.status) {
-      return NextResponse.json({ ok: false, error: "status required" }, { status: 400 });
-    }
+    if (!body.type) return NextResponse.json({ ok: false, error: "type required" }, { status: 400 });
+    if (!body.status) return NextResponse.json({ ok: false, error: "status required" }, { status: 400 });
     if (typeof body.amount !== "number" || body.amount <= 0) {
       return NextResponse.json({ ok: false, error: "amount must be > 0" }, { status: 400 });
     }
@@ -153,8 +154,8 @@ export async function POST(req: NextRequest) {
       propertyId: body.propertyId,
       ownerId: body.ownerId,
       tenantPersonId: body.tenantPersonId,
-  partyType: body.partyType || "AGENCY",
-  partyId: body.partyId,
+      partyType: body.partyType || "AGENCY",
+      partyId: body.partyId,
       installmentId: body.installmentId,
       paymentId: body.paymentId,
       notes: body.notes || "",

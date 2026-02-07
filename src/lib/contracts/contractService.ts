@@ -1,5 +1,6 @@
-import { connectDB } from "@/lib/db/connectDB";
+import { Types } from "mongoose";
 import Contract from "@/models/Contract";
+import { dbConnect } from "@/lib/mongoose";
 
 const TENANT_ID = "default";
 
@@ -11,7 +12,7 @@ export type CreateContractInput = {
   tenantPersonId: string;
 
   startDate: string; // YYYY-MM-DD
-  endDate?: string;  // YYYY-MM-DD (opcional)
+  endDate?: string; // YYYY-MM-DD (opcional)
 
   duracionMeses: number;
   montoBase: number;
@@ -35,10 +36,13 @@ function isoDateOnly(v: unknown): string {
   return d;
 }
 
-function addMonthsISO(startISO: string, months: number) {
-  const d = new Date(startISO + "T00:00:00Z");
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
+// ✅ LOCAL (sin UTC) para evitar 2026-01-01 => 2025-12-31
+function addMonthsDateOnly(startISO: string, months: number): string {
+  const [y, m, d] = startISO.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setMonth(date.getMonth() + months);
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function toInt(v: unknown, def = 0) {
@@ -51,15 +55,22 @@ function toNum(v: unknown, def = 0) {
   return Number.isFinite(n) ? n : def;
 }
 
+function mustObjectId(id: string, field: string) {
+  const s = String(id ?? "").trim();
+  if (!Types.ObjectId.isValid(s)) throw new Error(`${field} inválido`);
+  return new Types.ObjectId(s);
+}
+
+// ✅ EXPORT NOMBRADO: createContract
 export async function createContract(input: CreateContractInput) {
-  await connectDB();
+  await dbConnect();
 
   const startDate = isoDateOnly(input.startDate);
 
   const duracionMeses = toInt(input.duracionMeses, 0);
   if (duracionMeses < 1) throw new Error("duracionMeses debe ser >= 1");
 
-  const endDate = input.endDate ? isoDateOnly(input.endDate) : addMonthsISO(startDate, duracionMeses);
+  const endDate = input.endDate ? isoDateOnly(input.endDate) : addMonthsDateOnly(startDate, duracionMeses);
 
   const montoBase = Math.round(toNum(input.montoBase, 0));
   const dueDay = toInt(input.dueDay, 10);
@@ -69,12 +80,12 @@ export async function createContract(input: CreateContractInput) {
 
   const doc = await Contract.create({
     tenantId: TENANT_ID,
-    code: input.code || `CID-${Math.floor(Math.random() * 900 + 100)}`,
+    code: (input.code?.trim() || "") ? input.code!.trim() : `CID-${Math.floor(Math.random() * 900 + 100)}`,
     status: "ACTIVE",
 
-    propertyId: input.propertyId,
-    ownerId: input.ownerId,
-    tenantPersonId: input.tenantPersonId,
+    propertyId: mustObjectId(input.propertyId, "propertyId"),
+    ownerId: mustObjectId(input.ownerId, "ownerId"),
+    tenantPersonId: mustObjectId(input.tenantPersonId, "tenantPersonId"),
 
     startDate,
     endDate,
@@ -97,10 +108,11 @@ export async function createContract(input: CreateContractInput) {
   return doc;
 }
 
+// ✅ EXPORT NOMBRADO: listContracts
 export async function listContracts() {
-  await connectDB();
+  await dbConnect();
 
-  // ✅ CLAVE: populate para que el front reciba objetos y no ObjectIds
+  // IMPORTANTE: asegurate de que Person model esté registrado (ver nota abajo)
   const contracts = await Contract.find({ tenantId: TENANT_ID })
     .populate("propertyId")
     .populate("ownerId")
@@ -110,3 +122,4 @@ export async function listContracts() {
 
   return contracts;
 }
+

@@ -4,8 +4,13 @@ import path from "path";
 import { promises as fs } from "fs";
 
 import { dbConnect } from "@/lib/mongoose";
+
+// ✅ IMPORTANTÍSIMO: registramos modelos referenciados por Contract (evita "Schema hasn't been registered")
+import "@/models/Property";
+
 import { ContractFile } from "@/models/ContractFile";
 import Contract from "@/models/Contract";
+import Document from "@/models/Document";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,10 +52,25 @@ async function getParams(ctx: RouteContext): Promise<RouteParams> {
   return isPromise<RouteParams>(p) ? await p : p;
 }
 
+function ownerIdToString(ownerId: unknown): string {
+  if (typeof ownerId === "string") return ownerId;
+  if (ownerId && typeof ownerId === "object") {
+    const rec = ownerId as Record<string, unknown>;
+    const oid = rec["$oid"];
+    if (typeof oid === "string") return oid;
+    const id = rec["_id"];
+    if (typeof id === "string") return id;
+    if (id && typeof id === "object") {
+      const r2 = id as Record<string, unknown>;
+      if (typeof r2["$oid"] === "string") return r2["$oid"] as string;
+    }
+  }
+  return "";
+}
+
 export async function GET(_req: NextRequest, ctx: RouteContext) {
   try {
     await dbConnect();
-
     const params = await getParams(ctx);
     const contractId = String(params.id || "").trim();
 
@@ -94,14 +114,15 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
       return NextResponse.json({ ok: false, error: `contractId inválido: "${contractId}"` }, { status: 400 });
     }
 
-    const exists = await Contract.findOne({
+    // Traemos ownerId para duplicar el documento en Documentación/Propietarios
+    const contract = await Contract.findOne({
       tenantId: TENANT_ID,
       _id: new mongoose.Types.ObjectId(contractId),
     })
-      .select("_id")
+      .select("_id ownerId")
       .lean();
 
-    if (!exists) {
+    if (!contract) {
       return NextResponse.json({ ok: false, error: "Contrato no encontrado" }, { status: 404 });
     }
 
@@ -149,7 +170,8 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
 
     const uploadedBy = typeof uploadedByRaw === "string" && uploadedByRaw.trim() ? uploadedByRaw.trim() : "manual";
 
-    const doc = await ContractFile.create({
+    // 1) ContractFile (Caja)
+    const cf = await ContractFile.create({
       tenantId: TENANT_ID,
       contractId: new mongoose.Types.ObjectId(contractId),
       movementId,
@@ -161,11 +183,63 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
       uploadedBy,
     });
 
-    return NextResponse.json({ ok: true, file: doc }, { status: 201 });
+    // 2) Document (Documentación) - CONTRACT y (si hay ownerId válido) OWNER
+    const docsToCreate: Array<{
+      tenantId: string;
+      entityType: "CONTRACT" | "OWNER";
+      entityId: mongoose.Types.ObjectId;
+      originalName: string;
+      storedName: string;
+      mimeType: string;
+      size: number;
+      url: string;
+      docType: string;
+      notes: string;
+    }> = [];
+
+    docsToCreate.push({
+      tenantId: TENANT_ID,
+      entityType: "CONTRACT",
+      entityId: new mongoose.Types.ObjectId(contractId),
+      originalName,
+      storedName,
+      mimeType,
+      size: buffer.length,
+      url: publicPath,
+      docType: "Recibo pago",
+      notes: `Comprobante cargado desde Caja${movementId ? ` (movementId: ${String(movementId)})` : ""}`,
+    });
+
+    const ownerStr = ownerIdToString((contract as unknown as { ownerId?: unknown }).ownerId);
+
+    if (ownerStr && isObjectId(ownerStr)) {
+      docsToCreate.push({
+        tenantId: TENANT_ID,
+        entityType: "OWNER",
+        entityId: new mongoose.Types.ObjectId(ownerStr),
+        originalName,
+        storedName,
+        mimeType,
+        size: buffer.length,
+        url: publicPath,
+        docType: "Recibo pago",
+        notes: `Comprobante cargado desde Caja (Contrato: ${contractId})`,
+      });
+    }
+
+    // Si falla Documentación no rompemos Caja
+    try {
+      if (docsToCreate.length > 0) {
+        await Document.insertMany(docsToCreate);
+      }
+    } catch {
+      // noop
+    }
+
+    return NextResponse.json({ ok: true, file: cf }, { status: 201 });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
-
 

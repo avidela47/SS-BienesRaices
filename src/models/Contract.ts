@@ -1,4 +1,8 @@
+import "@/models/Property";
+import "@/models/Person";
+
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
+
 
 export type ContractStatus = "DRAFT" | "ACTIVE" | "EXPIRING" | "ENDED" | "TERMINATED";
 
