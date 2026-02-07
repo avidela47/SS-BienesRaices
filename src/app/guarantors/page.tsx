@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import BackButton from "@/app/components/BackButton";
 import { useToast } from "@/components/ToastProvider";
@@ -86,6 +87,125 @@ function Modal({
   );
 }
 
+function GuarantorFormFields({
+  tenants,
+  tenantsLoading,
+  fullName,
+  setFullName,
+  dniCuit,
+  setDniCuit,
+  whatsapp,
+  setWhatsapp,
+  email,
+  setEmail,
+  address,
+  setAddress,
+  notes,
+  setNotes,
+  tenantPersonId,
+  setTenantPersonId,
+}: {
+  tenants: TenantDTO[];
+  tenantsLoading: boolean;
+
+  fullName: string;
+  setFullName: (v: string) => void;
+  dniCuit: string;
+  setDniCuit: (v: string) => void;
+  whatsapp: string;
+  setWhatsapp: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
+  address: string;
+  setAddress: (v: string) => void;
+  notes: string;
+  setNotes: (v: string) => void;
+  tenantPersonId: string;
+  setTenantPersonId: (v: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="sm:col-span-2">
+        <label className="text-xs opacity-70">Inquilino *</label>
+        <select
+          value={tenantPersonId}
+          onChange={(e) => setTenantPersonId(e.target.value)}
+          disabled={tenantsLoading}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0 cursor-pointer"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        >
+          <option value="">{tenantsLoading ? "Cargando inquilinos..." : "Seleccionar inquilino"}</option>
+          {tenants.map((t) => (
+            <option key={t._id} value={t._id}>
+              {(t.code ? `${t.code} — ` : "") + t.fullName}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="sm:col-span-2">
+        <label className="text-xs opacity-70">Nombre y apellido *</label>
+        <input
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs opacity-70">DNI/CUIT</label>
+        <input
+          value={dniCuit}
+          onChange={(e) => setDniCuit(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs opacity-70">WhatsApp</label>
+        <input
+          value={whatsapp}
+          onChange={(e) => setWhatsapp(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs opacity-70">Email</label>
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs opacity-70">Dirección</label>
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+
+      <div className="sm:col-span-2">
+        <label className="text-xs opacity-70">Notas</label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+          style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export default function GuarantorsPage() {
   const { show } = useToast();
@@ -189,14 +309,7 @@ export default function GuarantorsPage() {
       const e = (p.address || "").toLowerCase();
       const relId = String(p.tenantPersonId || p.tenantId || "");
       const tenantName = relId ? (tenantById.get(relId)?.fullName || "").toLowerCase() : "";
-      return (
-        a.includes(q) ||
-        b.includes(q) ||
-        c.includes(q) ||
-        phoneVal.includes(q) ||
-        e.includes(q) ||
-        tenantName.includes(q)
-      );
+      return a.includes(q) || b.includes(q) || c.includes(q) || phoneVal.includes(q) || e.includes(q) || tenantName.includes(q);
     });
   }, [rows, query, tenantById]);
 
@@ -356,6 +469,7 @@ export default function GuarantorsPage() {
               aria-label="Nuevo garante"
               className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold cursor-pointer"
               style={{ color: "var(--benetton-green)" }}
+              type="button"
             >
               +
             </button>
@@ -366,12 +480,12 @@ export default function GuarantorsPage() {
           <div className="border-b border-white/10 px-5 py-4 flex items-center justify-between">
             <div className="text-sm font-semibold">Filtros</div>
 
-            {/* ✅ Un solo botón (no 2) */}
             <button
               onClick={() => void loadAll()}
               className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50 cursor-pointer"
               disabled={loading}
               title="Actualizar"
+              type="button"
             >
               Actualizar
             </button>
@@ -413,10 +527,7 @@ export default function GuarantorsPage() {
                     const phoneVal = p.phone || p.wasp;
 
                     return (
-                      <div
-                        key={p._id}
-                        className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start"
-                      >
+                      <div key={p._id} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start">
                         <div className="col-span-2 font-semibold">{p.code || "—"}</div>
                         <div className="col-span-3">{p.fullName}</div>
                         <div className="col-span-2 opacity-80">{p.dniCuit || "—"}</div>
@@ -432,12 +543,12 @@ export default function GuarantorsPage() {
 
                         <div className="col-span-1 text-right">
                           <button
-  onClick={() => openEditModal(p)}
-  className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-xs hover:bg-sky-400/15 transition"
->
-  Editar
-</button>
-
+                            onClick={() => openEditModal(p)}
+                            className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-xs hover:bg-sky-400/15 transition cursor-pointer"
+                            type="button"
+                          >
+                            Editar
+                          </button>
                         </div>
                       </div>
                     );
@@ -449,89 +560,29 @@ export default function GuarantorsPage() {
         </div>
 
         {/* Modal nuevo */}
-        <Modal open={openNew} onClose={() => (!saving ? (setOpenNew(false), resetForm()) : null)} title="Nuevo garante">
-          {/* (tu contenido igual) */}
-          {/* ... */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="sm:col-span-2">
-              <label className="text-xs opacity-70">Inquilino *</label>
-              <select
-                value={tenantPersonId}
-                onChange={(e) => setTenantPersonId(e.target.value)}
-                disabled={tenantsLoading}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0 cursor-pointer"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              >
-                <option value="">{tenantsLoading ? "Cargando inquilinos..." : "Seleccionar inquilino"}</option>
-                {tenants.map((t) => (
-                  <option key={t._id} value={t._id}>
-                    {(t.code ? `${t.code} — ` : "") + t.fullName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="text-xs opacity-70">Nombre y apellido *</label>
-              <input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs opacity-70">DNI/CUIT</label>
-              <input
-                value={dniCuit}
-                onChange={(e) => setDniCuit(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs opacity-70">WhatsApp</label>
-              <input
-                value={whatsapp}
-                onChange={(e) => setWhatsapp(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs opacity-70">Email</label>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-
-            <div>
-              <label className="text-xs opacity-70">Dirección</label>
-              <input
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="text-xs opacity-70">Notas</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
-                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
-              />
-            </div>
-          </div>
+        <Modal
+          open={openNew}
+          onClose={() => (!saving ? (setOpenNew(false), resetForm()) : null)}
+          title="Nuevo garante"
+        >
+          <GuarantorFormFields
+            tenants={tenants}
+            tenantsLoading={tenantsLoading}
+            fullName={fullName}
+            setFullName={setFullName}
+            dniCuit={dniCuit}
+            setDniCuit={setDniCuit}
+            whatsapp={whatsapp}
+            setWhatsapp={setWhatsapp}
+            email={email}
+            setEmail={setEmail}
+            address={address}
+            setAddress={setAddress}
+            notes={notes}
+            setNotes={setNotes}
+            tenantPersonId={tenantPersonId}
+            setTenantPersonId={setTenantPersonId}
+          />
 
           <div className="mt-4 flex items-center justify-end gap-2">
             <button
@@ -539,6 +590,7 @@ export default function GuarantorsPage() {
               onClick={() => (saving ? null : (setOpenNew(false), resetForm()))}
               className="rounded-xl border px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
               style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)" }}
+              type="button"
             >
               Cancelar
             </button>
@@ -548,13 +600,14 @@ export default function GuarantorsPage() {
               onClick={() => void createGuarantor()}
               className="rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 cursor-pointer"
               style={{ background: "var(--benetton-green)", color: "#05110A" }}
+              type="button"
             >
               {saving ? "Guardando…" : "Guardar"}
             </button>
           </div>
         </Modal>
 
-        {/* Modal editar (tu contenido igual, solo cursor-pointer ya lo tenés en varios) */}
+        {/* Modal editar (FIX: ahora tiene formulario completo) */}
         <Modal
           open={openEdit}
           onClose={() =>
@@ -564,8 +617,25 @@ export default function GuarantorsPage() {
           }
           title={editTarget ? `Editar garante (${editTarget.code || "—"})` : "Editar garante"}
         >
-          {/* tu contenido igual */}
-          {/* ... */}
+          <GuarantorFormFields
+            tenants={tenants}
+            tenantsLoading={tenantsLoading}
+            fullName={fullName}
+            setFullName={setFullName}
+            dniCuit={dniCuit}
+            setDniCuit={setDniCuit}
+            whatsapp={whatsapp}
+            setWhatsapp={setWhatsapp}
+            email={email}
+            setEmail={setEmail}
+            address={address}
+            setAddress={setAddress}
+            notes={notes}
+            setNotes={setNotes}
+            tenantPersonId={tenantPersonId}
+            setTenantPersonId={setTenantPersonId}
+          />
+
           <div className="mt-4 flex items-center justify-between gap-2">
             <button
               disabled={editSaving || deleteLoading}
@@ -575,6 +645,7 @@ export default function GuarantorsPage() {
                 borderColor: "rgba(255,255,255,0.12)",
                 background: deleteConfirm ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.03)",
               }}
+              type="button"
             >
               {deleteLoading ? "Eliminando…" : deleteConfirm ? "Confirmar eliminar" : "Eliminar"}
             </button>
@@ -589,6 +660,7 @@ export default function GuarantorsPage() {
                 }
                 className="rounded-xl border px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
                 style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)" }}
+                type="button"
               >
                 Cancelar
               </button>
@@ -598,6 +670,7 @@ export default function GuarantorsPage() {
                 onClick={() => void saveEdit()}
                 className="rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 cursor-pointer"
                 style={{ background: "var(--benetton-green)", color: "#05110A" }}
+                type="button"
               >
                 {editSaving ? "Guardando…" : "Guardar"}
               </button>
