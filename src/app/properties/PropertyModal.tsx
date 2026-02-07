@@ -29,15 +29,7 @@ export default function PropertyModal({
   if (!property) return null;
 
   const owner =
-    typeof property.ownerId === "object"
-      ? property.ownerId.fullName
-      : property.ownerId;
-
-  const tenant = property.inquilinoId
-    ? typeof property.inquilinoId === "object"
-      ? property.inquilinoId.fullName
-      : property.inquilinoId
-    : null;
+    typeof property.ownerId === "object" ? property.ownerId.fullName : property.ownerId;
 
   const st = normalizeStatus((property as unknown as { status?: unknown })?.status);
 
@@ -45,7 +37,7 @@ export default function PropertyModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
       <div className="relative w-full max-w-2xl mx-auto rounded-2xl border border-white/15 bg-neutral-900 shadow-xl p-8">
         <button
-          className="absolute top-4 right-4 text-neutral-400 hover:text-white text-xl"
+          className="absolute top-4 right-4 text-neutral-400 hover:text-white text-xl cursor-pointer"
           type="button"
           aria-label="Cerrar"
           onClick={onClose}
@@ -74,13 +66,6 @@ export default function PropertyModal({
           <div className="text-white font-semibold mb-1">Propietario:</div>
           <div className="text-white/80">{owner || "—"}</div>
         </div>
-
-        {tenant ? (
-          <div className="mb-4">
-            <div className="text-white font-semibold mb-1">Inquilino:</div>
-            <div className="text-white/80">{tenant}</div>
-          </div>
-        ) : null}
 
         {property.foto || property.mapa ? (
           <div className="mb-4 flex flex-col md:flex-row gap-6 items-center justify-center">
@@ -143,4 +128,3 @@ export default function PropertyModal({
     </div>
   );
 }
-

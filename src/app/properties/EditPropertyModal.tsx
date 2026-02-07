@@ -25,9 +25,11 @@ export default function EditPropertyModal({
   onSave: (updated: PropertyDTO) => void;
 }) {
   const [propietarios, setPropietarios] = useState<{ _id: string; fullName: string }[]>([]);
-  const [inquilinos, setInquilinos] = useState<{ _id: string; fullName: string }[]>([]);
 
-  const initialStatus = useMemo(() => normalizeStatus((property as unknown as { status?: unknown })?.status), [property]);
+  const initialStatus = useMemo(
+    () => normalizeStatus((property as unknown as { status?: unknown })?.status),
+    [property]
+  );
 
   const [form, setForm] = useState(() => ({
     propietario: typeof property.ownerId === "object" ? property.ownerId._id : (property.ownerId ?? ""),
@@ -35,31 +37,17 @@ export default function EditPropertyModal({
     tipo: property.tipo ?? "",
     foto: property.foto ?? "",
     mapa: property.mapa ?? "",
-    inquilino:
-      property.inquilinoId && typeof property.inquilinoId === "object"
-        ? property.inquilinoId._id
-        : (property.inquilinoId ?? ""),
-    // 👇 guardo el status inicial por si estaba en MAINTENANCE
-    statusInicial: initialStatus,
+    status: initialStatus as AppPropertyStatus,
   }));
 
-  // Cargar people
   useEffect(() => {
-    fetch("/api/people")
+    fetch("/api/people?type=OWNER")
       .then((res) => res.json())
       .then((data) => {
-        let people: PersonLite[] = [];
-
-        if (Array.isArray(data?.people)) people = data.people as PersonLite[];
-        else if (Array.isArray(data)) people = data as PersonLite[];
-
-        setPropietarios(people.filter((p) => p.type === "OWNER").map((p) => ({ _id: p._id, fullName: p.fullName })));
-        setInquilinos(people.filter((p) => p.type === "TENANT").map((p) => ({ _id: p._id, fullName: p.fullName })));
+        const people: PersonLite[] = Array.isArray(data?.people) ? data.people : [];
+        setPropietarios(people.map((p) => ({ _id: p._id, fullName: p.fullName })));
       })
-      .catch(() => {
-        setPropietarios([]);
-        setInquilinos([]);
-      });
+      .catch(() => setPropietarios([]));
   }, []);
 
   const [loading, setLoading] = useState(false);
@@ -81,13 +69,6 @@ export default function EditPropertyModal({
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     const { name, value } = e.target;
-
-    // ✅ Regla: al tocar inquilino, el status se define solo
-    if (name === "inquilino") {
-      setForm((prev) => ({ ...prev, inquilino: value }));
-      return;
-    }
-
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
@@ -109,25 +90,13 @@ export default function EditPropertyModal({
     setError("");
 
     try {
-      // ✅ Si la propiedad está en MAINTENANCE y no tocaste inquilino, la dejamos como está.
-      // ✅ Si tocaste inquilino:
-      //    - con inquilino => RENTED
-      //    - sin inquilino => AVAILABLE
-      const nextStatus: AppPropertyStatus =
-        form.inquilino && form.inquilino.trim()
-          ? "RENTED"
-          : form.statusInicial === "MAINTENANCE"
-          ? "MAINTENANCE"
-          : "AVAILABLE";
-
       const payload: Record<string, unknown> = {
         ownerId: form.propietario,
         addressLine: form.ubicacion,
         tipo: form.tipo,
         foto: form.foto,
         mapa: form.mapa,
-        status: nextStatus,
-        inquilinoId: form.inquilino && form.inquilino.trim() ? form.inquilino : null,
+        status: form.status, // ✅ ACÁ controlás mantenimiento
       };
 
       const res = await fetch(`/api/properties/${property._id}`, {
@@ -155,7 +124,7 @@ export default function EditPropertyModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-md mx-auto rounded-2xl border border-white/15 bg-neutral-900 shadow-xl p-8 relative text-white max-h-[90vh] overflow-y-auto">
         <button
-          className="absolute top-4 right-4 text-neutral-400 hover:text-white text-xl"
+          className="absolute top-4 right-4 text-neutral-400 hover:text-white text-xl cursor-pointer"
           type="button"
           aria-label="Cerrar"
           onClick={onClose}
@@ -166,14 +135,14 @@ export default function EditPropertyModal({
         <h1 className="text-2xl font-bold text-center mb-6">Editar Propiedad</h1>
 
         <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>
-          <div>
+          <div className="md:col-span-2">
             <label className="block mb-1 font-medium">Propietario</label>
             <select
               name="propietario"
               value={form.propietario}
               onChange={handleChange}
               required
-              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
+              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:outline-none focus:ring-0 cursor-pointer"
             >
               <option value="">Seleccionar...</option>
               {propietarios.map((p) => (
@@ -191,7 +160,7 @@ export default function EditPropertyModal({
               value={form.tipo}
               onChange={handleChange}
               required
-              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
+              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:outline-none focus:ring-0 cursor-pointer"
             >
               <option value="">Seleccionar...</option>
               {["Departamento", "Casa", "Local", "Duplex"].map((t) => (
@@ -203,30 +172,52 @@ export default function EditPropertyModal({
           </div>
 
           <div>
+            <label className="block mb-1 font-medium">Estado</label>
+            <select
+              name="status"
+              value={form.status}
+              onChange={handleChange}
+              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:outline-none focus:ring-0 cursor-pointer"
+            >
+              <option value="AVAILABLE">Disponible</option>
+              <option value="RENTED">Alquilada</option>
+              <option value="MAINTENANCE">Mantenimiento</option>
+            </select>
+
+            <div className="text-xs text-white/60 mt-2">
+              {form.status === "MAINTENANCE"
+                ? "En mantenimiento: no debería alquilarse."
+                : form.status === "RENTED"
+                ? "Alquilada: por ahora manual (luego lo define el contrato)."
+                : "Disponible para alquilar."}
+            </div>
+          </div>
+
+          <div className="md:col-span-2">
             <label className="block mb-1 font-medium">Ubicación</label>
             <input
               name="ubicacion"
               value={form.ubicacion}
               onChange={handleChange}
               required
-              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
+              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:outline-none focus:ring-0"
             />
           </div>
 
-          <div>
+          <div className="md:col-span-2">
             <label className="block mb-1 font-medium">Mapa (URL)</label>
             <input
               name="mapa"
               value={form.mapa}
               onChange={handleChange}
-              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
+              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:outline-none focus:ring-0"
               placeholder="https://maps.google.com/..."
             />
           </div>
 
-          <div>
+          <div className="md:col-span-2">
             <label className="block mb-1 font-medium">Foto</label>
-            <input type="file" accept="image/*" onChange={handleFile} className="w-full" />
+            <input type="file" accept="image/*" onChange={handleFile} className="w-full cursor-pointer" />
             {form.foto ? (
               <Image
                 src={form.foto}
@@ -238,35 +229,11 @@ export default function EditPropertyModal({
             ) : null}
           </div>
 
-          <div>
-            <label className="block mb-1 font-medium">Inquilino</label>
-            <select
-              name="inquilino"
-              value={form.inquilino}
-              onChange={handleChange}
-              className="w-full rounded-xl border border-white/10 px-3 py-2 bg-black/20 text-white outline-none focus:ring-2 focus:ring-emerald-400/30"
-            >
-              <option value="">Sin inquilino</option>
-              {inquilinos.map((p) => (
-                <option key={p._id} value={p._id}>
-                  {p.fullName}
-                </option>
-              ))}
-            </select>
-
-            <div className="text-xs text-white/60 mt-2">
-              {form.inquilino && form.inquilino.trim()
-                ? "Al guardar: la propiedad quedará como ALQUILADA (RENTED)."
-                : form.statusInicial === "MAINTENANCE"
-                ? "Al guardar: se mantiene en MANTENIMIENTO (MAINTENANCE)."
-                : "Al guardar: la propiedad quedará como DISPONIBLE (AVAILABLE)."}
-            </div>
-          </div>
-
           <div className="md:col-span-2">
             <button
               type="submit"
-              className="w-full rounded-xl px-4 py-2 text-sm text-white font-semibold shadow bg-(--benetton-green) hover:brightness-110 mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full rounded-xl px-4 py-2 text-sm text-white font-semibold shadow disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+              style={{ background: "var(--benetton-green)", color: "#05110A" }}
               disabled={loading}
             >
               {loading ? "Guardando..." : "Guardar cambios"}
@@ -279,3 +246,5 @@ export default function EditPropertyModal({
     </div>
   );
 }
+
+

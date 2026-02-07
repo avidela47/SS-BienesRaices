@@ -61,8 +61,24 @@ type CreateBody = {
   foto?: string;
   mapa?: string;
   ownerId?: string;
+
+  // opcional
   inquilinoId?: string | null;
+
+  // opcional
+  status?: "AVAILABLE" | "RENTED" | "MAINTENANCE";
+
+  // mantenimiento opcional
+  maintenanceNotes?: string;
+  maintenanceFrom?: string | Date | null;
+  maintenanceTo?: string | Date | null;
 };
+
+function toDateOrNull(v: unknown): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 export async function POST(req: Request) {
   try {
@@ -79,31 +95,39 @@ export async function POST(req: Request) {
     }
 
     const owner = await Person.findById(body.ownerId).lean<{ type?: string } | null>();
-    if (!owner) {
-      return NextResponse.json({ ok: false, message: "ownerId no existe" }, { status: 400 });
-    }
+    if (!owner) return NextResponse.json({ ok: false, message: "ownerId no existe" }, { status: 400 });
     if (owner.type !== "OWNER") {
       return NextResponse.json({ ok: false, message: "ownerId debe ser OWNER" }, { status: 400 });
     }
 
+    // inquilino opcional
     let inquilinoObjectId: Types.ObjectId | null = null;
     if (body.inquilinoId !== undefined && body.inquilinoId !== null && body.inquilinoId !== "") {
       if (!isValidObjectId(body.inquilinoId)) {
         return NextResponse.json({ ok: false, message: "inquilinoId inválido" }, { status: 400 });
       }
-
       const tenant = await Person.findById(body.inquilinoId).lean<{ type?: string } | null>();
-      if (!tenant) {
-        return NextResponse.json({ ok: false, message: "inquilinoId no existe" }, { status: 400 });
-      }
+      if (!tenant) return NextResponse.json({ ok: false, message: "inquilinoId no existe" }, { status: 400 });
       if (tenant.type !== "TENANT") {
         return NextResponse.json({ ok: false, message: "inquilinoId debe ser TENANT" }, { status: 400 });
       }
-
       inquilinoObjectId = new Types.ObjectId(body.inquilinoId);
     }
 
     const code = body.code && String(body.code).trim() ? String(body.code).trim() : await nextPropertyCode();
+
+    // status inicial:
+    // - si explícitamente viene MAINTENANCE => MAINTENANCE
+    // - si hay inquilino => RENTED
+    // - si no => AVAILABLE
+    const requestedStatus = body.status;
+    const status: "AVAILABLE" | "RENTED" | "MAINTENANCE" =
+      requestedStatus === "MAINTENANCE" ? "MAINTENANCE" : inquilinoObjectId ? "RENTED" : "AVAILABLE";
+
+    // Si está MAINTENANCE, NO permitimos inquilino desde acá (se asigna por contrato)
+    if (status === "MAINTENANCE") {
+      inquilinoObjectId = null;
+    }
 
     const property = await Property.create({
       tenantId: TENANT_ID,
@@ -117,8 +141,13 @@ export async function POST(req: Request) {
       foto: body.foto ? String(body.foto).trim() : "",
       mapa: body.mapa ? String(body.mapa).trim() : "",
       inquilinoId: inquilinoObjectId,
-      status: inquilinoObjectId ? "RENTED" : "AVAILABLE",
-      availableFrom: inquilinoObjectId ? null : null,
+      status,
+      availableFrom: null,
+
+      // mantenimiento opcional
+      maintenanceNotes: body.maintenanceNotes ? String(body.maintenanceNotes).trim() : "",
+      maintenanceFrom: toDateOrNull(body.maintenanceFrom),
+      maintenanceTo: toDateOrNull(body.maintenanceTo),
     });
 
     return NextResponse.json({ ok: true, propertyId: property._id, code: property.code });

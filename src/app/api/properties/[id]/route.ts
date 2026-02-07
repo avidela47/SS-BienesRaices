@@ -20,19 +20,33 @@ function isValidObjectId(v: unknown): v is string {
   return typeof v === "string" && Types.ObjectId.isValid(v);
 }
 
+function toDateOrNull(v: unknown): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 type PatchBody = Partial<{
   code: string;
   addressLine: string;
   unit: string;
   city: string;
   province: string;
+
   status: "AVAILABLE" | "RENTED" | "MAINTENANCE";
+
   ownerId: string;
   tipo: string;
   foto: string;
   mapa: string;
+
   inquilinoId: string | null;
   availableFrom: Date | string | null;
+
+  // mantenimiento
+  maintenanceNotes: string;
+  maintenanceFrom: Date | string | null;
+  maintenanceTo: Date | string | null;
 }>;
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -46,6 +60,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!isValidObjectId(id)) {
       return NextResponse.json({ ok: false, message: "No se encontró la propiedad" }, { status: 404 });
     }
+
+    // Traemos estado actual para aplicar reglas
+    const current = await Property.findOne({ _id: id, tenantId: TENANT_ID })
+      .select("_id status inquilinoId")
+      .lean<{ _id: Types.ObjectId; status?: string; inquilinoId?: Types.ObjectId | null } | null>();
+
+    if (!current) {
+      return NextResponse.json({ ok: false, message: "No se encontró la propiedad" }, { status: 404 });
+    }
+
+    const currentStatus = (current.status || "AVAILABLE") as "AVAILABLE" | "RENTED" | "MAINTENANCE";
+    const currentHasTenant = !!current.inquilinoId;
 
     // Armamos update con whitelist (no dejamos que entren campos raros)
     const update: Record<string, unknown> = {};
@@ -72,9 +98,46 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       update.ownerId = new Types.ObjectId(body.ownerId);
     }
 
-    // ✅ Regla principal: inquilinoId controla status
+    // ✅ Mantenimiento (campos)
+    if (body.maintenanceNotes !== undefined) update.maintenanceNotes = String(body.maintenanceNotes ?? "").trim();
+    if (body.maintenanceFrom !== undefined) update.maintenanceFrom = toDateOrNull(body.maintenanceFrom);
+    if (body.maintenanceTo !== undefined) update.maintenanceTo = toDateOrNull(body.maintenanceTo);
+
+    // ✅ Cambio explícito de status (con reglas)
+    if (body.status !== undefined) {
+      if (!["AVAILABLE", "RENTED", "MAINTENANCE"].includes(body.status)) {
+        return NextResponse.json({ ok: false, message: "status inválido" }, { status: 400 });
+      }
+
+      if (body.status === "MAINTENANCE") {
+        // entrar a mantenimiento: liberamos inquilino desde properties
+        update.status = "MAINTENANCE";
+        update.inquilinoId = null;
+        update.availableFrom = null;
+      } else {
+        // salir de mantenimiento (o setear manualmente):
+        // - si hay inquilino (actual) => RENTED
+        // - si no => AVAILABLE
+        const nextStatus = currentHasTenant ? "RENTED" : "AVAILABLE";
+        update.status = body.status === "RENTED" ? (currentHasTenant ? "RENTED" : "AVAILABLE") : nextStatus;
+
+        if (!currentHasTenant) {
+          update.inquilinoId = null;
+          update.availableFrom = null;
+        }
+      }
+    }
+
+    // ✅ inquilinoId (regla: NO se permite si está MAINTENANCE)
     if (body.inquilinoId !== undefined) {
-      // soporta que desde el front venga "" para “vaciar”
+      const effectiveStatus = (update.status ?? currentStatus) as "AVAILABLE" | "RENTED" | "MAINTENANCE";
+      if (effectiveStatus === "MAINTENANCE") {
+        return NextResponse.json(
+          { ok: false, message: "No se puede asignar inquilino mientras está en MANTENIMIENTO" },
+          { status: 400 }
+        );
+      }
+
       const raw = body.inquilinoId;
 
       if (raw === null || raw === "") {
@@ -94,20 +157,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
         update.inquilinoId = new Types.ObjectId(raw);
         update.status = "RENTED";
-        // availableFrom se usa cuando está libre; alquilada => null
         update.availableFrom = null;
-      }
-    } else {
-      // Si NO viene inquilinoId, permitimos status solo si viene explícito
-      if (body.status !== undefined) {
-        if (!["AVAILABLE", "RENTED", "MAINTENANCE"].includes(body.status)) {
-          return NextResponse.json({ ok: false, message: "status inválido" }, { status: 400 });
-        }
-        update.status = body.status;
       }
     }
 
-    // ✅ Nota: mantenemos tenantId como en tu GET (consistencia)
+    // availableFrom (si querés permitirlo manualmente; por ahora lo dejamos controlado)
+    if (body.availableFrom !== undefined) {
+      update.availableFrom = toDateOrNull(body.availableFrom);
+    }
+
     const property = await Property.findOneAndUpdate(
       { _id: id, tenantId: TENANT_ID },
       { $set: update },
@@ -137,7 +195,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await dbConnect();
 
@@ -147,7 +205,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ ok: false, message: "No se encontró la propiedad" }, { status: 404 });
     }
 
-    // ✅ Consistente con tenantId
     const result = await Property.deleteOne({ _id: id, tenantId: TENANT_ID });
 
     if (result.deletedCount === 0) {

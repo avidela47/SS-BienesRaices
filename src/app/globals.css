@@ -17,7 +17,6 @@
   --benetton-muted: #A2A2B2;
 }
 
-
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0B0B0F;
@@ -31,7 +30,141 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-input, select, textarea {
-  font-family: 'Inter', 'Segoe UI', 'Roboto', Arial, sans-serif;
+/* =========================
+   Inputs base (consistentes)
+========================= */
+
+input,
+select,
+textarea {
+  font-family: "Inter", "Segoe UI", "Roboto", Arial, sans-serif;
   color: #fff;
+}
+
+/* base visual (no pisa Tailwind si ya seteás clases, pero mejora defaults) */
+input,
+select,
+textarea {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 0.75rem; /* ~rounded-xl */
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Focus ring prolijo */
+input:focus,
+select:focus,
+textarea:focus {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+/* =========================
+   Cursor / clickeables
+========================= */
+
+/* Todo lo "clickeable" por defecto */
+button,
+[role="button"],
+a,
+summary,
+label {
+  cursor: pointer;
+}
+
+/* Inputs que son interacción directa */
+select,
+input[type="checkbox"],
+input[type="radio"],
+input[type="file"],
+input[type="range"] {
+  cursor: pointer;
+}
+
+/* Estados deshabilitados */
+button:disabled,
+[role="button"][aria-disabled="true"],
+a[aria-disabled="true"],
+select:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.55;
+}
+
+/* Si usás disabled con Tailwind a veces queda opaco pero no el cursor */
+button:disabled *,
+[role="button"][aria-disabled="true"] * {
+  cursor: not-allowed !important;
+}
+
+/* Links con hover suave (no obligatorio, pero queda más pro) */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* a:hover {
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.35);
+} */
+
+/* =========================
+   Scrollbar (opcional suave)
+========================= */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* =========================
+   FIX: líneas/blancos de focus + autofill
+========================= */
+
+/* No outlines */
+*:focus,
+*:focus-visible {
+  outline: none !important;
+}
+
+/* No ring/box-shadow en controles */
+input:focus,
+select:focus,
+textarea:focus,
+button:focus {
+  box-shadow: none !important;
+}
+
+/* Chrome autofill (ese brillo/línea/fondo molesto) */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px rgba(0, 0, 0, 0.25) inset !important;
+  -webkit-text-fill-color: #fff !important;
+  transition: background-color 9999s ease-out 0s !important;
 }

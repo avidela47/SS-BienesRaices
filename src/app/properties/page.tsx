@@ -12,7 +12,7 @@ const PropertyModal = dynamic(() => import("./PropertyModal"), { ssr: false });
 
 type ToastState = { message: string; type: "success" | "error" } | null;
 
-// ✅ Status real del sistema (backend/modelo)
+// Status real
 type AppPropertyStatus = "AVAILABLE" | "RENTED" | "MAINTENANCE";
 type StatusFilter = "ALL" | AppPropertyStatus;
 
@@ -20,27 +20,17 @@ function isAppPropertyStatus(v: string): v is AppPropertyStatus {
   return v === "AVAILABLE" || v === "RENTED" || v === "MAINTENANCE";
 }
 
-// Normaliza lo que venga desde types/backend (aunque esté mal tipeado en lib/types)
 function normalizeStatus(v: unknown): AppPropertyStatus {
   const s = typeof v === "string" ? v : "";
   if (isAppPropertyStatus(s)) return s;
-
-  // Si en algún lado quedó status viejo, lo “mapeamos” para no romper UI
   if (s === "OCCUPIED") return "RENTED";
   if (s === "INACTIVE") return "MAINTENANCE";
-
-  // Default seguro
   return "AVAILABLE";
 }
 
 function ownerName(owner: PropertyDTO["ownerId"]) {
   if (!owner) return "—";
   return typeof owner === "object" ? owner.fullName : "—";
-}
-
-function tenantName(tenant?: PropertyDTO["inquilinoId"]) {
-  if (!tenant) return "—";
-  return typeof tenant === "object" ? tenant.fullName : "—";
 }
 
 function statusLabel(s: AppPropertyStatus) {
@@ -55,11 +45,7 @@ function statusPillClass(s: AppPropertyStatus) {
   return "border-amber-400/30 bg-amber-400/10 text-amber-200";
 }
 
-type ApiErrorShape = {
-  message?: unknown;
-  error?: unknown;
-  details?: unknown;
-};
+type ApiErrorShape = { message?: unknown; error?: unknown; details?: unknown };
 
 function asString(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -70,7 +56,6 @@ async function safeReadError(res: Response): Promise<string> {
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const data = (await res.json()) as ApiErrorShape;
-
       return (
         asString(data.message) ||
         asString(data.error) ||
@@ -78,7 +63,6 @@ async function safeReadError(res: Response): Promise<string> {
         `HTTP ${res.status} ${res.statusText}`
       );
     }
-
     const txt = (await res.text()).trim();
     return txt ? txt : `HTTP ${res.status} ${res.statusText}`;
   } catch {
@@ -141,16 +125,7 @@ export default function Propiedades() {
       if (status !== "ALL" && st !== status) return false;
       if (!t) return true;
 
-      const hay = [
-        p.code,
-        p.addressLine,
-        p.unit,
-        p.city,
-        p.province,
-        st,
-        ownerName(p.ownerId),
-        tenantName(p.inquilinoId),
-      ]
+      const hay = [p.code, p.addressLine, p.unit, p.city, p.province, st, ownerName(p.ownerId)]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -161,10 +136,17 @@ export default function Propiedades() {
 
   const kpis = useMemo(() => {
     const total = filtered.length;
+    const available = filtered.filter((p) =>
+  normalizeStatus((p as unknown as { status?: unknown })?.status) === "AVAILABLE"
+).length;
 
-    const available = filtered.filter((p) => normalizeStatus((p as unknown as { status?: unknown })?.status) === "AVAILABLE").length;
-    const rented = filtered.filter((p) => normalizeStatus((p as unknown as { status?: unknown })?.status) === "RENTED").length;
-    const maintenance = filtered.filter((p) => normalizeStatus((p as unknown as { status?: unknown })?.status) === "MAINTENANCE").length;
+const rented = filtered.filter((p) =>
+  normalizeStatus((p as unknown as { status?: unknown })?.status) === "RENTED"
+).length;
+
+const maintenance = filtered.filter((p) =>
+  normalizeStatus((p as unknown as { status?: unknown })?.status) === "MAINTENANCE"
+).length;
 
     return { total, available, rented, maintenance };
   }, [filtered]);
@@ -176,7 +158,7 @@ export default function Propiedades() {
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
             <h1 className="text-xl font-semibold">Propiedades</h1>
-            <p className="text-sm opacity-70">Gestión de propiedades con propietario, inquilino y estado.</p>
+            <p className="text-sm opacity-70">Gestión de propiedades con propietario y estado.</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -185,7 +167,7 @@ export default function Propiedades() {
               href="/properties/new"
               title="Nueva propiedad"
               aria-label="Nueva propiedad"
-              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold cursor-pointer"
               style={{ color: "var(--benetton-green)" }}
             >
               +
@@ -193,32 +175,32 @@ export default function Propiedades() {
           </div>
         </div>
 
-      {/* Error */}
-      {error ? (
-        <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 text-amber-100 px-4 py-3 text-sm">
-          {error}
-        </div>
-      ) : null}
+        {/* Error */}
+        {error ? (
+          <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-400/10 text-amber-100 px-4 py-3 text-sm">
+            {error}
+          </div>
+        ) : null}
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-white/60">Total</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{kpis.total}</div>
+        {/* KPIs */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="text-xs text-white/60">Total</div>
+            <div className="text-2xl font-extrabold text-white mt-1">{kpis.total}</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-4">
+            <div className="text-xs text-white/60">Disponibles</div>
+            <div className="text-2xl font-extrabold text-white mt-1">{kpis.available}</div>
+          </div>
+          <div className="rounded-2xl border border-sky-400/15 bg-sky-400/5 p-4">
+            <div className="text-xs text-white/60">Alquiladas</div>
+            <div className="text-2xl font-extrabold text-white mt-1">{kpis.rented}</div>
+          </div>
+          <div className="rounded-2xl border border-amber-400/15 bg-amber-400/5 p-4">
+            <div className="text-xs text-white/60">Mantenimiento</div>
+            <div className="text-2xl font-extrabold text-white mt-1">{kpis.maintenance}</div>
+          </div>
         </div>
-        <div className="rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-4">
-          <div className="text-xs text-white/60">Disponibles</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{kpis.available}</div>
-        </div>
-        <div className="rounded-2xl border border-sky-400/15 bg-sky-400/5 p-4">
-          <div className="text-xs text-white/60">Alquiladas</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{kpis.rented}</div>
-        </div>
-        <div className="rounded-2xl border border-amber-400/15 bg-amber-400/5 p-4">
-          <div className="text-xs text-white/60">Mantenimiento</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{kpis.maintenance}</div>
-        </div>
-      </div>
 
         {/* Filtros */}
         <div className="rounded-2xl border border-white/10 bg-white/5 mb-4">
@@ -232,8 +214,8 @@ export default function Propiedades() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Código, dirección, propietario, inquilino…"
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-white/10"
+                placeholder="Código, dirección, propietario…"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:outline-none focus:ring-0"
               />
             </div>
 
@@ -247,7 +229,7 @@ export default function Propiedades() {
                   else if (isAppPropertyStatus(v)) setStatus(v);
                   else setStatus("ALL");
                 }}
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-white/10"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:outline-none focus:ring-0 cursor-pointer"
               >
                 <option value="ALL">Todos</option>
                 <option value="AVAILABLE">Disponible</option>
@@ -262,17 +244,16 @@ export default function Propiedades() {
         <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
           <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
             <div className="text-sm font-semibold text-white">Listado</div>
-            <div className="text-xs text-white/60">{filtered.length} items</div>
+            {/* ✅ sacamos “1 items” porque queda feo */}
           </div>
 
           <div className="overflow-x-auto">
             <div className="min-w-245">
-              <div className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] gap-0 px-4 py-2 text-xs text-white/70 bg-white/5">
+              <div className="grid grid-cols-[160px_1fr_190px_260px_170px] gap-0 px-4 py-2 text-xs text-white/70 bg-white/5">
                 <div>Código</div>
                 <div>Dirección</div>
                 <div>Estado</div>
                 <div>Propietario</div>
-                <div>Inquilino</div>
                 <div className="text-right">Acciones</div>
               </div>
 
@@ -284,43 +265,42 @@ export default function Propiedades() {
                 filtered.map((p) => {
                   const st = normalizeStatus((p as unknown as { status?: unknown })?.status);
 
+
                   return (
                     <div
                       key={p._id}
-                      className="grid grid-cols-[140px_1fr_170px_220px_220px_130px] px-4 py-3 border-t border-white/10 items-center"
+                      className="grid grid-cols-[160px_1fr_190px_260px_170px] px-4 py-3 border-t border-white/10 items-center"
                     >
-                      <div>
-                        <div className="text-white font-extrabold">{p.code || "(sin código)"}</div>
-                        <div className="text-xs text-white/60">{p.province || "—"}</div>
+                      <div className="text-white font-extrabold">{p.code || "(sin código)"}</div>
+
+                      <div className="text-white font-semibold">
+                        {[
+                          p.addressLine,
+                          p.unit ? `piso/unidad ${p.unit}` : "",
+                          p.city || "",
+                          p.province || "",
+                        ]
+                          .filter(Boolean)
+                          .join(" — ")}
                       </div>
 
                       <div>
-                        <div className="text-white font-semibold">{p.addressLine}</div>
-                        <div className="text-xs text-white/60">{[p.unit, p.city].filter(Boolean).join(" • ") || "—"}</div>
-                      </div>
-
-                      <div>
-                        <span
-                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold border ${statusPillClass(
-                            st
-                          )}`}
-                        >
+                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold border ${statusPillClass(st)}`}>
                           {statusLabel(st)}
                         </span>
                       </div>
 
                       <div className="text-sm text-white/85">{ownerName(p.ownerId)}</div>
-                      <div className="text-sm text-white/85">{tenantName(p.inquilinoId)}</div>
 
                       <div className="flex justify-end gap-2">
                         <button
-                          className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs"
+                          className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs cursor-pointer"
                           onClick={() => setSelected(p)}
                         >
                           Ver
                         </button>
                         <button
-                          className="px-3 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 hover:bg-sky-400/15 text-white text-xs"
+                          className="px-3 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 hover:bg-sky-400/15 text-white text-xs cursor-pointer"
                           onClick={() => setEditTarget(p)}
                         >
                           Editar
@@ -365,7 +345,7 @@ export default function Propiedades() {
 
               <div className="flex justify-end gap-2 mt-6">
                 <button
-                  className="px-4 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white"
+                  className="px-4 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white cursor-pointer"
                   onClick={() => setDeleteTarget(null)}
                   disabled={deleting}
                 >
@@ -382,7 +362,6 @@ export default function Propiedades() {
                     const id = deleteTarget._id;
                     const prev = properties;
 
-                    // Optimista: lo saco ya de la lista
                     setProperties((p) => p.filter((x) => x._id !== id));
 
                     try {
@@ -390,7 +369,6 @@ export default function Propiedades() {
 
                       if (!res.ok) {
                         const msg = await safeReadError(res);
-                        // Revertimos si falla
                         setProperties(prev);
                         setToast({ message: msg || "No se pudo eliminar la propiedad.", type: "error" });
                       } else {
@@ -423,7 +401,7 @@ export default function Propiedades() {
             }`}
           >
             {toast.message}
-            <button className="ml-4 text-white/80" onClick={() => setToast(null)}>
+            <button className="ml-4 text-white/80 cursor-pointer" onClick={() => setToast(null)}>
               ✕
             </button>
           </div>
@@ -432,3 +410,4 @@ export default function Propiedades() {
     </main>
   );
 }
+
