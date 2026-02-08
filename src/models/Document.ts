@@ -1,64 +1,44 @@
-import { Schema, model, models, Types } from "mongoose";
+import { Schema, model, models, type Model, type Types } from "mongoose";
 
-export type DocumentEntityType =
-  | "OWNER"
-  | "TENANT"
-  | "GUARANTOR"
-  | "PROPERTY"
-  | "CONTRACT"
-  | "PAYMENT"
-  | "INSTALLMENT"
-  | "AGENCY";
+export interface DocumentDoc {
+  _id: Types.ObjectId;
+  tenantId: string;
 
-const DocumentSchema = new Schema(
+  title: string;
+  type: "DNI" | "CONTRATO" | "RECIBO" | "GARANTIA" | "SERVICIO" | "OTRO";
+  entity: "TENANT" | "OWNER" | "GUARANTOR" | "PROPERTY" | "CONTRACT" | "OTHER";
+  entityId?: string | null;
+
+  description?: string;
+
+  // guardamos imágenes como base64 dataURL
+  images: string[];
+
+  status: "ACTIVE" | "ARCHIVED";
+
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const DocumentSchema = new Schema<DocumentDoc>(
   {
     tenantId: { type: String, required: true, index: true },
 
-    entityType: {
-      type: String,
-      enum: ["OWNER", "TENANT", "GUARANTOR", "PROPERTY", "CONTRACT", "PAYMENT", "INSTALLMENT", "AGENCY"],
-      required: true,
-      index: true,
-    },
+    title: { type: String, required: true, trim: true },
+    type: { type: String, required: true, default: "OTRO" },
+    entity: { type: String, required: true, default: "OTHER" },
+    entityId: { type: String, default: null },
 
-    // Para AGENCY puede ser null
-    entityId: { type: Schema.Types.ObjectId, required: false, index: true },
+    description: { type: String, default: "" },
 
-    // compat (antes se usaba personId)
-    personId: { type: Schema.Types.ObjectId, required: false, index: true },
+    images: { type: [String], default: [] },
 
-    originalName: { type: String, required: true, trim: true },
-    storedName: { type: String, required: true, trim: true },
-    mimeType: { type: String, required: true, trim: true },
-    size: { type: Number, required: true },
-
-    // URL pública (guardamos en /public/uploads)
-    url: { type: String, required: true, trim: true },
-
-  docType: { type: String, trim: true, default: "OTRO" },
-
-    notes: { type: String, trim: true, default: "" },
+    status: { type: String, required: true, default: "ACTIVE" },
   },
   { timestamps: true }
 );
 
-DocumentSchema.index({ tenantId: 1, entityType: 1, entityId: 1, createdAt: -1 });
+const DocumentModel =
+  (models.Document as Model<DocumentDoc>) || model<DocumentDoc>("Document", DocumentSchema);
 
-export type DocumentDoc = {
-  _id: Types.ObjectId;
-  tenantId: string;
-  entityType: DocumentEntityType;
-  entityId?: Types.ObjectId;
-  personId?: Types.ObjectId;
-  originalName: string;
-  storedName: string;
-  mimeType: string;
-  size: number;
-  url: string;
-  docType?: string;
-  notes?: string;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export default models.Document || model("Document", DocumentSchema);
+export default DocumentModel;

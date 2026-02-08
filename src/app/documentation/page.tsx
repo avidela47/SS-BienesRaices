@@ -1,410 +1,580 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import BackButton from "@/app/components/BackButton";
 import { useToast } from "@/components/ToastProvider";
 
-type PersonType = "OWNER" | "TENANT" | "GUARANTOR";
-type EntityType = PersonType | "PROPERTY" | "CONTRACT" | "PAYMENT" | "INSTALLMENT" | "AGENCY";
-
-type PersonDTO = {
-  _id: unknown;
-  code?: string;
-  type: string;
-  fullName: string;
-  tenantPersonId?: string | null;
-};
-
-type PropertyDTO = {
-  _id: unknown;
-  code?: string;
-  addressLine: string;
-  unit?: string;
-};
-
-type ContractDTO = {
-  _id: unknown;
-  code?: string;
-};
-
-type PaymentDTO = {
-  _id: unknown;
-  date: string;
-  amount: number;
-};
-
-type InstallmentDTO = {
-  _id: unknown;
-  period: string;
-  amount: number;
-};
-
-type PeopleListResponse =
-  | { ok: true; people: PersonDTO[] }
-  | { ok: false; error?: string; message?: string };
+/* =========================
+   Tipos
+========================= */
 
 type DocumentDTO = {
   _id: string;
-  entityType: EntityType;
-  entityId?: string;
-  personId?: string;
-  docType?: string;
-  originalName: string;
-  storedName: string;
-  mimeType: string;
-  size: number;
-  url: string;
-  notes?: string;
-  createdAt: string;
+  title: string;
+  type: string;
+  entity: string;
+  entityId?: string | null;
+  description?: string;
+  images: string[];
+  status?: string;
+  createdAt?: string;
 };
 
-type DocsListResponse =
+type ListResponse =
   | { ok: true; documents: DocumentDTO[] }
-  | { ok: false; error?: string; message?: string };
+  | { ok: false; message?: string; error?: string };
 
-type UploadResponse =
+type OneResponse =
   | { ok: true; document: DocumentDTO }
-  | { ok: false; error?: string; message?: string };
+  | { ok: false; message?: string; error?: string };
 
 type DeleteResponse =
   | { ok: true }
-  | { ok: false; error?: string; message?: string };
+  | { ok: false; message?: string; error?: string };
 
-const DOC_TYPES_BY_ENTITY: Record<EntityType, string[]> = {
-  OWNER: ["DNI", "Contrato inmobiliaria", "Contrato alquiler", "Escritura", "Otro"],
-  TENANT: ["DNI", "Contrato alquiler", "Otro"],
-  GUARANTOR: ["DNI", "Recibo sueldo", "Escritura", "Certificado", "Otro"],
-  PROPERTY: ["Escritura", "Plano", "Otro"],
-  CONTRACT: ["Contrato alquiler", "Anexo", "Otro"],
-  PAYMENT: ["Recibo pago", "Otro"],
-  INSTALLMENT: ["Recibo pago", "Otro"],
-  AGENCY: ["Otro"],
-};
+type PersonMini = { _id: string; code?: string; fullName: string };
+type PropertyMini = { _id: string; code?: string; addressLine?: string; title?: string };
+type ContractMini = { _id: string; code?: string; title?: string };
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
+type PeopleListResponse =
+  | { ok: true; people: PersonMini[] }
+  | { ok: false; message?: string; error?: string };
+
+type PropertiesListResponse =
+  | { ok: true; properties: PropertyMini[] }
+  | { ok: false; message?: string; error?: string };
+
+type ContractsListResponse =
+  | { ok: true; contracts: ContractMini[] }
+  | { ok: false; message?: string; error?: string };
+
+type ErrLike = { message?: unknown; error?: unknown };
+
+function getErr(r: unknown, fb: string) {
+  const obj = (r ?? {}) as ErrLike;
+  if (typeof obj.message === "string" && obj.message.trim()) return obj.message;
+  if (typeof obj.error === "string" && obj.error.trim()) return obj.error;
+  return fb;
 }
 
-// ✅ soporta: "65f0..." o { $oid: "65f0..." }
-function normalizeMongoId(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (isRecord(v) && typeof v["$oid"] === "string") return v["$oid"] as string;
-  return "";
+function Modal({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-neutral-950 p-5 relative text-white max-h-[85vh] overflow-y-auto">
+        <button
+          onClick={onClose}
+          className="absolute right-3 top-3 rounded-lg border border-white/10 px-2 py-1 text-sm opacity-80 hover:opacity-100 cursor-pointer"
+          aria-label="Cerrar"
+          title="Cerrar"
+          type="button"
+        >
+          ✕
+        </button>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  );
 }
 
-function getErrorMessage(r: { ok: boolean; error?: string; message?: string } | undefined, fallback: string) {
-  if (!r) return fallback;
-  if (r.ok) return "";
-  if (typeof r.message === "string" && r.message.trim()) return r.message;
-  if (typeof r.error === "string" && r.error.trim()) return r.error;
-  return fallback;
+async function readFilesAsDataURL(files: FileList): Promise<string[]> {
+  const list = Array.from(files);
+  const out = await Promise.all(
+    list.map(
+      (file) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        })
+    )
+  );
+  return out.filter(Boolean);
 }
 
-function bytesToHuman(n: number) {
-  if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+/* =========================
+   Entidad (ES) -> value (API)
+========================= */
+
+type EntityValue = "TENANT" | "OWNER" | "GUARANTOR" | "PROPERTY" | "CONTRACT" | "AGENCY" | "OTHER";
+
+const ENTITY_ES: Array<{ label: string; value: EntityValue; help: string }> = [
+  { label: "Inquilino", value: "TENANT", help: "Documentación del inquilino" },
+  { label: "Propietario", value: "OWNER", help: "Documentación del propietario" },
+  { label: "Garante", value: "GUARANTOR", help: "Documentación del garante" },
+  { label: "Propiedad", value: "PROPERTY", help: "Documentación de la propiedad" },
+  { label: "Contrato", value: "CONTRACT", help: "Documentación del contrato" },
+  { label: "Inmobiliaria", value: "AGENCY", help: "Documentación de la inmobiliaria" },
+  { label: "Otro", value: "OTHER", help: "Sin entidad específica" },
+];
+
+function entityLabel(v: string) {
+  return ENTITY_ES.find((x) => x.value === v)?.label ?? "Otro";
 }
 
-function typeLabel(t: EntityType) {
-  if (t === "OWNER") return "Propietarios";
-  if (t === "TENANT") return "Inquilinos";
-  if (t === "GUARANTOR") return "Garantes";
-  if (t === "PROPERTY") return "Propiedades";
-  if (t === "CONTRACT") return "Contratos";
-  if (t === "PAYMENT") return "Pagos";
-  if (t === "INSTALLMENT") return "Cuotas";
-  return "Inmobiliaria";
-}
+/* =========================
+   Página
+========================= */
 
 export default function DocumentationPage() {
   const { show } = useToast();
 
-  const [entityType, setEntityType] = useState<EntityType>("OWNER");
-  const [peopleLoading, setPeopleLoading] = useState(false);
-  const [people, setPeople] = useState<PersonDTO[]>([]);
-  const [entityId, setEntityId] = useState("");
-  const [docType, setDocType] = useState("");
+  // tabla
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<DocumentDTO[]>([]);
+  const [query, setQuery] = useState("");
 
-  const [properties, setProperties] = useState<PropertyDTO[]>([]);
-  const [contracts, setContracts] = useState<ContractDTO[]>([]);
-  const [payments, setPayments] = useState<PaymentDTO[]>([]);
-  const [installments, setInstallments] = useState<InstallmentDTO[]>([]);
+  // modales
+  const [openNew, setOpenNew] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [docs, setDocs] = useState<DocumentDTO[]>([]);
-  const [notes, setNotes] = useState("");
+  const [openEdit, setOpenEdit] = useState(false);
+  const [editTarget, setEditTarget] = useState<DocumentDTO | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
 
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const [deletingId, setDeletingId] = useState<string>("");
+  // form
+  const [title, setTitle] = useState("");
+  const [docType, setDocType] = useState("OTRO");
+  const [entity, setEntity] = useState<EntityValue>("OTHER");
+  const [entityId, setEntityId] = useState<string>("");
+  const [description, setDescription] = useState("");
+  const [images, setImages] = useState<string[]>([]);
 
-  const isAgency = entityType === "AGENCY";
+  // relacionados
+  const [relLoading, setRelLoading] = useState(false);
+  const [relOptions, setRelOptions] = useState<Array<{ id: string; label: string }>>([]);
 
-  const peopleForSelect = useMemo(() => {
-    if (isAgency) return [];
-    const want = entityType;
-    return people.filter((p) => String(p.type).toUpperCase() === want);
-  }, [people, entityType, isAgency]);
+  // IMPORTANTE: cuando abrís Editar, NO quiero que el effect “entity” te borre entityId
+  const skipNextEntityResetRef = useRef(false);
 
-  const entityOptions = useMemo(() => {
-    if (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR") {
-      return peopleForSelect
-        .map((p) => {
-          const id = normalizeMongoId(p._id);
-          return {
-            value: id,
-            label: p.code ? `${p.fullName} (${p.code})` : p.fullName,
-          };
-        })
-        .filter((x) => x.value);
+  function resetForm() {
+    setTitle("");
+    setDocType("OTRO");
+    setEntity("OTHER");
+    setEntityId("");
+    setDescription("");
+    setImages([]);
+    setRelOptions([]);
+    setRelLoading(false);
+  }
+
+  // endpoint real que ya tenías funcionando
+  const API_BASE = "/api/documents";
+
+  async function loadAll() {
+    try {
+      setLoading(true);
+      const res = await fetch(API_BASE, { cache: "no-store" });
+      const data = (await res.json()) as ListResponse;
+
+      if (!res.ok || !data.ok) {
+        show(getErr(data, "Error de red cargando documentos"));
+        setRows([]);
+        return;
+      }
+
+      setRows(Array.isArray(data.documents) ? data.documents : []);
+    } catch {
+      show("Error de red cargando documentos");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((d) =>
+      `${d.title} ${d.type} ${d.entity} ${d.entityId ?? ""} ${d.description ?? ""}`.toLowerCase().includes(q)
+    );
+  }, [rows, query]);
+
+  async function loadRelatedOptions(nextEntity: EntityValue) {
+    try {
+      setRelLoading(true);
+      setRelOptions([]);
+
+      if (nextEntity === "AGENCY") {
+        setRelOptions([{ id: "AGENCY", label: "Inmobiliaria" }]);
+        return;
+      }
+
+      if (nextEntity === "OTHER") {
+        setRelOptions([]);
+        return;
+      }
+
+      if (nextEntity === "TENANT" || nextEntity === "OWNER" || nextEntity === "GUARANTOR") {
+        const res = await fetch(`/api/people?type=${nextEntity}`, { cache: "no-store" });
+        const data = (await res.json()) as PeopleListResponse;
+
+        if (!res.ok || !data.ok) {
+          show(getErr(data, "No se pudieron cargar los relacionados"));
+          setRelOptions([]);
+          return;
+        }
+
+        setRelOptions(
+          (data.people || []).map((p) => ({
+            id: p._id,
+            label: `${p.code ? `${p.code} — ` : ""}${p.fullName}`,
+          }))
+        );
+        return;
+      }
+
+      if (nextEntity === "PROPERTY") {
+        const res = await fetch(`/api/properties`, { cache: "no-store" });
+        const data = (await res.json()) as PropertiesListResponse;
+
+        if (!res.ok || !data.ok) {
+          show(getErr(data, "No se pudieron cargar propiedades"));
+          setRelOptions([]);
+          return;
+        }
+
+        setRelOptions(
+          (data.properties || []).map((p) => {
+            const labelBase = p.addressLine || p.title || "";
+            const label = `${p.code ? `${p.code} — ` : ""}${labelBase || p._id}`;
+            return { id: p._id, label };
+          })
+        );
+        return;
+      }
+
+      if (nextEntity === "CONTRACT") {
+        const res = await fetch(`/api/contracts`, { cache: "no-store" });
+        const data = (await res.json()) as ContractsListResponse;
+
+        if (!res.ok || !data.ok) {
+          show(getErr(data, "No se pudieron cargar contratos"));
+          setRelOptions([]);
+          return;
+        }
+
+        setRelOptions(
+          (data.contracts || []).map((c) => ({
+            id: c._id,
+            label: `${c.code ? `${c.code} — ` : ""}${c.title || c._id}`,
+          }))
+        );
+        return;
+      }
+    } catch {
+      setRelOptions([]);
+      show("Error de red cargando relacionados");
+    } finally {
+      setRelLoading(false);
+    }
+  }
+
+  // cuando cambia entidad, recargo opciones. PERO no borro entityId si venís de abrir Editar
+  useEffect(() => {
+    void loadRelatedOptions(entity);
+
+    if (skipNextEntityResetRef.current) {
+      skipNextEntityResetRef.current = false;
+      return;
     }
 
-    if (entityType === "PROPERTY") {
-      return properties
-        .map((p) => {
-          const id = normalizeMongoId(p._id);
-          return {
-            value: id,
-            label: `${p.code || ""} ${p.addressLine}${p.unit ? ` (${p.unit})` : ""}`.trim(),
-          };
-        })
-        .filter((x) => x.value);
+    setEntityId("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity]);
+
+  function openEditModal(d: DocumentDTO) {
+    // IMPORTANTÍSIMO: seteo esto antes de cambiar entity
+    skipNextEntityResetRef.current = true;
+
+    setEditTarget(d);
+    setTitle(d.title || "");
+    setDocType(d.type || "OTRO");
+    setEntity((d.entity as EntityValue) || "OTHER");
+    setEntityId(d.entity === "AGENCY" ? "AGENCY" : String(d.entityId || ""));
+    setDescription(d.description || "");
+    setImages(Array.isArray(d.images) ? d.images : []);
+    setDeleteConfirm(false);
+    setOpenEdit(true);
+  }
+
+  async function createDoc() {
+    if (!title.trim()) return show("Título es obligatorio");
+    if (entity !== "OTHER" && entity !== "AGENCY" && !entityId.trim()) return show("Seleccioná el relacionado");
+
+    try {
+      setSaving(true);
+
+      const payload = {
+        title: title.trim(),
+        type: docType,
+        entity,
+        entityId: entity === "AGENCY" ? "AGENCY" : entityId.trim() ? entityId.trim() : null,
+        description: description.trim(),
+        images,
+      };
+
+      const res = await fetch(API_BASE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await res.json()) as OneResponse;
+
+      if (!res.ok || !data.ok) {
+        show(getErr(data, "No se pudo crear"));
+        return;
+      }
+
+      setRows((p) => [data.document, ...p]);
+      show("Documento creado");
+      setOpenNew(false);
+      resetForm();
+    } catch {
+      show("Error de red creando documento");
+    } finally {
+      setSaving(false);
     }
+  }
 
-    if (entityType === "CONTRACT") {
-      return contracts
-        .map((c) => {
-          const id = normalizeMongoId(c._id);
-          return {
-            value: id,
-            label: c.code ?? id,
-          };
-        })
-        .filter((x) => x.value);
+  async function saveEdit() {
+    if (!editTarget) return;
+    if (!title.trim()) return show("Título es obligatorio");
+    if (entity !== "OTHER" && entity !== "AGENCY" && !entityId.trim()) return show("Seleccioná el relacionado");
+
+    try {
+      setEditSaving(true);
+
+      const payload = {
+        title: title.trim(),
+        type: docType,
+        entity,
+        entityId: entity === "AGENCY" ? "AGENCY" : entityId.trim() ? entityId.trim() : null,
+        description: description.trim(),
+        images,
+      };
+
+      const res = await fetch(`${API_BASE}/${editTarget._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await res.json()) as OneResponse;
+
+      if (!res.ok || !data.ok) {
+        show(getErr(data, "No se pudo guardar"));
+        return;
+      }
+
+      setRows((prev) => prev.map((x) => (x._id === editTarget._id ? data.document : x)));
+      show("Documento actualizado");
+      setOpenEdit(false);
+      setEditTarget(null);
+      resetForm();
+    } catch {
+      show("Error de red guardando cambios");
+    } finally {
+      setEditSaving(false);
     }
+  }
 
-    if (entityType === "PAYMENT") {
-      return payments
-        .map((p) => {
-          const id = normalizeMongoId(p._id);
-          return {
-            value: id,
-            label: `${new Date(p.date).toLocaleDateString("es-AR")} — ${p.amount.toLocaleString("es-AR", {
-              style: "currency",
-              currency: "ARS",
-            })}`,
-          };
-        })
-        .filter((x) => x.value);
-    }
+  async function delDoc() {
+    if (!editTarget) return;
 
-    if (entityType === "INSTALLMENT") {
-      return installments
-        .map((i) => {
-          const id = normalizeMongoId(i._id);
-          return {
-            value: id,
-            label: `${i.period} — ${i.amount.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}`,
-          };
-        })
-        .filter((x) => x.value);
-    }
-
-    return [];
-  }, [entityType, peopleForSelect, properties, contracts, payments, installments]);
-
-  async function loadPeople() {
-    if (isAgency) {
-      setPeople([]);
+    if (!deleteConfirm) {
+      setDeleteConfirm(true);
       return;
     }
 
     try {
-      setPeopleLoading(true);
-      const res = await fetch("/api/people", { cache: "no-store" });
-      const data = (await res.json()) as PeopleListResponse;
-
-      if (!res.ok || !data.ok) {
-        setPeople([]);
-        show(getErrorMessage(data, "No se pudieron cargar personas"));
-        return;
-      }
-
-      setPeople(Array.isArray(data.people) ? data.people : []);
-    } catch {
-      setPeople([]);
-      show("Error de red cargando personas");
-    } finally {
-      setPeopleLoading(false);
-    }
-  }
-
-  async function loadEntities() {
-    try {
-      const [propsRes, contractsRes, paymentsRes, installmentsRes] = await Promise.all([
-        fetch("/api/properties", { cache: "no-store" }),
-        fetch("/api/contracts", { cache: "no-store" }),
-        fetch("/api/payments", { cache: "no-store" }),
-        fetch("/api/installments", { cache: "no-store" }),
-      ]);
-
-      const propsData = await propsRes.json();
-      const contractsData = await contractsRes.json();
-      const paymentsData = await paymentsRes.json();
-      const installmentsData = await installmentsRes.json();
-
-      setProperties(Array.isArray(propsData?.properties) ? propsData.properties : []);
-      setContracts(Array.isArray(contractsData?.contracts) ? contractsData.contracts : []);
-      setPayments(Array.isArray(paymentsData?.payments) ? paymentsData.payments : []);
-      setInstallments(Array.isArray(installmentsData?.installments) ? installmentsData.installments : []);
-    } catch {
-      setProperties([]);
-      setContracts([]);
-      setPayments([]);
-      setInstallments([]);
-    }
-  }
-
-  async function loadDocs(nextEntityType: EntityType, nextEntityId: string) {
-    try {
-      setDocsLoading(true);
-      setDocs([]);
-
-      const params = new URLSearchParams();
-      params.set("entityType", nextEntityType);
-
-      if (nextEntityType !== "AGENCY") {
-        if (!nextEntityId) {
-          setDocs([]);
-          return;
-        }
-        params.set("entityId", nextEntityId);
-      }
-
-      const res = await fetch(`/api/documents?${params.toString()}`, { cache: "no-store" });
-      const data = (await res.json()) as DocsListResponse;
-
-      if (!res.ok || !data.ok) {
-        setDocs([]);
-        show(getErrorMessage(data, "No se pudieron cargar documentos"));
-        return;
-      }
-
-      setDocs(Array.isArray(data.documents) ? data.documents : []);
-    } catch {
-      setDocs([]);
-      show("Error de red cargando documentos");
-    } finally {
-      setDocsLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadPeople();
-    void loadEntities();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    setEntityId("");
-    setFile(null);
-    setNotes("");
-    setDocType("");
-    setDocs([]);
-    if (entityType === "AGENCY") {
-      void loadDocs("AGENCY", "");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityType]);
-
-  useEffect(() => {
-    if (entityType === "AGENCY") return;
-    void loadDocs(entityType, entityId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityId]);
-
-  async function upload() {
-    if (!file) return show("Seleccioná un archivo");
-    if (!isAgency && !entityId) return show("Seleccioná un vínculo");
-
-    try {
-      setUploading(true);
-
-      const form = new FormData();
-      form.append("entityType", entityType);
-      if (!isAgency) form.append("entityId", entityId);
-      if (docType) form.append("docType", docType);
-      if (notes.trim()) form.append("notes", notes.trim());
-      form.append("file", file);
-
-      const res = await fetch("/api/documents", { method: "POST", body: form });
-      const data = (await res.json()) as UploadResponse;
-
-      if (!res.ok || !data.ok) {
-        show(getErrorMessage(data, "No se pudo subir el documento"));
-        return;
-      }
-
-      show("Documento subido");
-      setFile(null);
-      setNotes("");
-
-      if (entityType === "AGENCY") {
-        await loadDocs("AGENCY", "");
-      } else {
-        await loadDocs(entityType, entityId);
-      }
-    } catch {
-      show("Error de red subiendo documento");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function removeDoc(docId: string) {
-    try {
-      setDeletingId(docId);
-
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 12000);
-
-      const res = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
-        method: "DELETE",
-        cache: "no-store",
-        signal: controller.signal,
-      });
+      setDeleteLoading(true);
+      const res = await fetch(`${API_BASE}/${editTarget._id}`, { method: "DELETE" });
       const data = (await res.json()) as DeleteResponse;
-      window.clearTimeout(timeoutId);
 
       if (!res.ok || !data.ok) {
-        if (res.status === 404) {
-          show("Documento no encontrado, se actualizará la lista.");
-        } else {
-          show(getErrorMessage(data, "No se pudo eliminar"));
-        }
-      } else {
-        show("Documento eliminado");
+        show(getErr(data, "No se pudo eliminar"));
+        return;
       }
 
-      if (entityType === "AGENCY") {
-        await loadDocs("AGENCY", "");
-      } else {
-        await loadDocs(entityType, entityId);
-      }
+      setRows((prev) => prev.filter((x) => x._id !== editTarget._id));
+      show("Documento eliminado");
+      setOpenEdit(false);
+      setEditTarget(null);
+      setDeleteConfirm(false);
+      resetForm();
     } catch {
       show("Error de red eliminando documento");
     } finally {
-      setDeletingId("");
+      setDeleteLoading(false);
     }
   }
+
+  // ✅ NOTA CLAVE: no es componente <FormBody />, es función render.
+  // Así NO se remonta todo el form y NO perdés el cursor.
+  const renderRelatedSelect = () => {
+    const help = ENTITY_ES.find((x) => x.value === entity)?.help ?? "";
+
+    return (
+      <div className="sm:col-span-2">
+        <label className="text-xs opacity-70">
+          Relacionado con {help ? <span className="opacity-60">— {help}</span> : null}
+        </label>
+
+        {entity === "OTHER" ? (
+          <div
+            className="mt-1 rounded-xl border px-3 py-2 text-sm opacity-70"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          >
+            No aplica
+          </div>
+        ) : (
+          <select
+            value={entityId}
+            onChange={(e) => setEntityId(e.target.value)}
+            disabled={relLoading || entity === "AGENCY"}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0 cursor-pointer"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          >
+            <option value="">
+              {relLoading ? "Cargando..." : entity === "AGENCY" ? "Inmobiliaria" : "Seleccionar..."}
+            </option>
+
+            {entity === "AGENCY" ? (
+              <option value="AGENCY">Inmobiliaria</option>
+            ) : (
+              relOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))
+            )}
+          </select>
+        )}
+      </div>
+    );
+  };
+
+  const renderFormBody = () => {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2">
+          <label className="text-xs opacity-70">Título *</label>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          />
+        </div>
+
+        <div>
+          <label className="text-xs opacity-70">Tipo</label>
+          <select
+            value={docType}
+            onChange={(e) => setDocType(e.target.value)}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0 cursor-pointer"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          >
+            {["DNI", "CONTRATO", "RECIBO", "GARANTIA", "SERVICIO", "OTRO"].map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="text-xs opacity-70">Entidad</label>
+          <select
+            value={entity}
+            onChange={(e) => setEntity(e.target.value as EntityValue)}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0 cursor-pointer"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          >
+            {ENTITY_ES.map((x) => (
+              <option key={x.value} value={x.value}>
+                {x.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {renderRelatedSelect()}
+
+        <div className="sm:col-span-2">
+          <label className="text-xs opacity-70">Descripción</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+            style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}
+          />
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className="text-xs opacity-70">Imágenes (subir desde PC)</label>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="mt-1 w-full cursor-pointer"
+            onChange={async (e) => {
+              // ✅ FIX: guardar referencia antes del await (evita null)
+              const input = e.currentTarget;
+              const files = input.files;
+              if (!files || files.length === 0) return;
+
+              const dataUrls = await readFilesAsDataURL(files);
+              setImages((p) => [...p, ...dataUrls]);
+
+              input.value = "";
+            }}
+          />
+
+          {images.length > 0 && (
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {images.map((src, idx) => (
+                <div key={idx} className="rounded-xl border border-white/10 bg-black/30 p-2">
+                  <img src={src} alt={`img-${idx}`} className="w-full h-28 object-cover rounded-lg" />
+                  <button
+                    type="button"
+                    onClick={() => setImages((p) => p.filter((_, i) => i !== idx))}
+                    className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 py-1 text-xs hover:bg-white/10 cursor-pointer"
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <main className="min-h-screen px-5 py-8 text-white" style={{ background: "var(--background)" }}>
@@ -412,200 +582,168 @@ export default function DocumentationPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Documentación</h1>
-            <p className="text-sm opacity-70">Escaneo / subida y organización de documentos</p>
+            <p className="text-sm opacity-70">Listado y carga de documentos</p>
           </div>
 
           <div className="flex items-center gap-2">
             <BackButton />
+            <button
+              onClick={() => {
+                resetForm();
+                setOpenNew(true);
+              }}
+              title="Nuevo documento"
+              aria-label="Nuevo documento"
+              className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-lg font-semibold cursor-pointer"
+              style={{ color: "var(--benetton-green)" }}
+            >
+              +
+            </button>
           </div>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-          <div className="border-b border-white/10 px-5 py-4">
-            <div className="text-sm font-semibold">Subida</div>
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5">
+          <div className="border-b border-white/10 px-5 py-4 flex items-center justify-between">
+            <div className="text-sm font-semibold">Filtros</div>
+            <button
+              onClick={() => void loadAll()}
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50 cursor-pointer"
+              disabled={loading}
+              title="Actualizar"
+            >
+              Actualizar
+            </button>
           </div>
 
           <div className="px-5 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-white/50">Carpeta</label>
-                <select
-                  value={entityType}
-                  onChange={(e) => setEntityType(e.target.value as EntityType)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
-                >
-                  <option value="OWNER">Propietarios</option>
-                  <option value="TENANT">Inquilinos</option>
-                  <option value="GUARANTOR">Garantes</option>
-                  <option value="PROPERTY">Propiedades</option>
-                  <option value="CONTRACT">Contratos</option>
-                  <option value="PAYMENT">Pagos</option>
-                  <option value="INSTALLMENT">Cuotas</option>
-                  <option value="AGENCY">Inmobiliaria</option>
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="text-xs text-white/50">{isAgency ? "Destino" : "Vínculo"}</label>
-
-                {isAgency ? (
-                  <div className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm opacity-80">
-                    Inmobiliaria (carpeta general)
-                  </div>
-                ) : (
-                  <select
-                    value={entityId}
-                    onChange={(e) => setEntityId(e.target.value)}
-                    disabled={peopleLoading && (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR")}
-                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
-                  >
-                    <option value="">
-                      {peopleLoading && (entityType === "OWNER" || entityType === "TENANT" || entityType === "GUARANTOR")
-                        ? "Cargando..."
-                        : `Seleccionar ${typeLabel(entityType).toLowerCase().slice(0, -1)}`}
-                    </option>
-                    {entityOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="md:col-span-2">
-                <label className="text-xs text-white/50">Archivo</label>
-                <input
-                  type="file"
-                  onChange={(e) => setFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-                />
-                <div className="mt-1 text-xs text-white/50">
-                  {file ? `Seleccionado: ${file.name} (${bytesToHuman(file.size)})` : "Seleccioná un archivo para subir"}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-white/50">Tipo de documento</label>
-                <select
-                  value={docType}
-                  onChange={(e) => setDocType(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
-                >
-                  <option value="">Seleccionar tipo...</option>
-                  {DOC_TYPES_BY_ENTITY[entityType].map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-white/50">Notas (opcional)</label>
-                <input
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
-                  placeholder="Ej: DNI frente, contrato firmado..."
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-2">
-              <div className="text-xs text-white/50">
-                Carpeta activa: <span className="text-white/80">{typeLabel(entityType)}</span>
-                {!isAgency && (
-                  <>
-                    {" "}
-                    • Vínculo: <span className="text-white/80">{entityId ? "Seleccionado" : "—"}</span>
-                  </>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void upload()}
-                disabled={uploading || !file || (!isAgency && !entityId)}
-                className="rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer disabled:opacity-50 hover:brightness-110"
-                style={{ background: "var(--benetton-green)", color: "#05110A" }}
-              >
-                {uploading ? "Subiendo…" : "Subir"}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/10 text-sm font-semibold">
-            Documentos {docsLoading ? "(cargando…)" : `(${docs.length})`}
+            <div className="mb-2 text-xs text-white/50">BUSCAR</div>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar…"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:outline-none focus:ring-0"
+            />
           </div>
 
-          <div className="p-4">
-            {!isAgency && !entityId ? (
-              <div className="text-sm opacity-70">Seleccioná un vínculo para ver sus documentos.</div>
-            ) : docsLoading ? (
-              <div className="text-sm opacity-70">Cargando…</div>
-            ) : docs.length === 0 ? (
-              <div className="text-sm opacity-70">Todavía no hay documentos en esta carpeta.</div>
-            ) : (
-              <div className="rounded-xl border border-white/10 overflow-hidden">
-                <div className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide text-neutral-300 bg-white/5">
-                  <div className="col-span-5">Archivo</div>
-                  <div className="col-span-2">Tipo de documento</div>
-                  <div className="col-span-2">Notas</div>
-                  <div className="col-span-2">Tamaño</div>
-                  <div className="col-span-1 text-right">Acc.</div>
-                </div>
+          <div className="px-4 pb-4">
+            <div className="overflow-hidden rounded-2xl border border-white/10">
+              <div className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide text-neutral-300 bg-white/5">
+                <div className="col-span-2">Tipo</div>
+                <div className="col-span-6">Título</div>
+                <div className="col-span-2">Entidad</div>
+                <div className="col-span-1">Imgs</div>
+                <div className="col-span-1 text-right">Acc.</div>
+              </div>
 
-                <div>
-                  {docs.map((d) => (
-                    <div key={d._id} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start">
-                      <div className="col-span-5">
-                        <a href={d.url} target="_blank" rel="noreferrer" className="font-semibold hover:underline">
-                          {d.originalName}
-                        </a>
-                        <div className="text-xs opacity-60 mt-0.5">{new Date(d.createdAt).toLocaleString()}</div>
+              {loading ? (
+                <div className="px-4 py-6 text-sm opacity-70">Cargando…</div>
+              ) : filtered.length === 0 ? (
+                <div className="px-4 py-6 text-sm opacity-70">No hay documentos.</div>
+              ) : (
+                filtered.map((d) => {
+                  const ent = entityLabel(d.entity);
+                  return (
+                    <div
+                      key={d._id}
+                      className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10 items-start"
+                    >
+                      <div className="col-span-2 font-semibold">{d.type || "OTRO"}</div>
+                      <div className="col-span-6">
+                        <div className="font-semibold">{d.title}</div>
+                        {d.description ? <div className="text-xs opacity-70 line-clamp-1">{d.description}</div> : null}
                       </div>
-
-                      <div className="col-span-2 opacity-80 truncate" title={d.docType || ""}>
-                        {d.docType || "—"}
-                      </div>
-
-                      <div className="col-span-2 opacity-80 truncate" title={d.notes || ""}>
-                        {d.notes || "—"}
-                      </div>
-
-                      <div className="col-span-2 opacity-80">{bytesToHuman(d.size)}</div>
-
-                      <div className="col-span-1 flex items-center justify-end gap-2">
-                        <a
-                          href={d.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10 transition"
-                        >
-                          Imprimir
-                        </a>
+                      <div className="col-span-2 opacity-80">{ent}</div>
+                      <div className="col-span-1 opacity-80">{Array.isArray(d.images) ? d.images.length : 0}</div>
+                      <div className="col-span-1 text-right">
                         <button
-                          type="button"
-                          onClick={() => void removeDoc(d._id)}
-                          disabled={deletingId === d._id}
-                          className="rounded-xl border border-white/10 bg-white/5 px-2 py-1 text-xs cursor-pointer hover:bg-red-500/15 hover:border-red-400/40 hover:text-red-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => openEditModal(d)}
+                          className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-xs hover:bg-sky-400/15 transition cursor-pointer"
                         >
-                          {deletingId === d._id ? "…" : "Eliminar"}
+                          Editar
                         </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
+
+        {/* MODAL NUEVO */}
+        <Modal open={openNew} onClose={() => (!saving ? (setOpenNew(false), resetForm()) : null)} title="Nuevo documento">
+          {renderFormBody()}
+
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button
+              disabled={saving}
+              onClick={() => (saving ? null : (setOpenNew(false), resetForm()))}
+              className="rounded-xl border px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
+              style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)" }}
+            >
+              Cancelar
+            </button>
+
+            <button
+              disabled={saving}
+              onClick={() => void createDoc()}
+              className="rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 cursor-pointer"
+              style={{ background: "var(--benetton-green)", color: "#05110A" }}
+            >
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+          </div>
+        </Modal>
+
+        {/* MODAL EDITAR */}
+        <Modal
+          open={openEdit}
+          onClose={() =>
+            editSaving || deleteLoading ? null : (setOpenEdit(false), setEditTarget(null), setDeleteConfirm(false), resetForm())
+          }
+          title="Editar documento"
+        >
+          {renderFormBody()}
+
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <button
+              disabled={editSaving || deleteLoading}
+              onClick={() => void delDoc()}
+              className="rounded-xl border px-4 py-2 text-sm cursor-pointer hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                borderColor: "rgba(255,255,255,0.12)",
+                background: deleteConfirm ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.03)",
+              }}
+            >
+              {deleteLoading ? "Eliminando…" : deleteConfirm ? "Confirmar eliminar" : "Eliminar"}
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                disabled={editSaving || deleteLoading}
+                onClick={() =>
+                  editSaving || deleteLoading ? null : (setOpenEdit(false), setEditTarget(null), setDeleteConfirm(false), resetForm())
+                }
+                className="rounded-xl border px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                style={{ borderColor: "rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)" }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                disabled={editSaving || deleteLoading}
+                onClick={() => void saveEdit()}
+                className="rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 cursor-pointer"
+                style={{ background: "var(--benetton-green)", color: "#05110A" }}
+              >
+                {editSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       </div>
     </main>
   );
 }
+
+
