@@ -61,7 +61,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ ok: false, message: "No se encontró la propiedad" }, { status: 404 });
     }
 
-    // Traemos estado actual para aplicar reglas
+    // Estado actual (para reglas)
     const current = await Property.findOne({ _id: id, tenantId: TENANT_ID })
       .select("_id status inquilinoId")
       .lean<{ _id: Types.ObjectId; status?: string; inquilinoId?: Types.ObjectId | null } | null>();
@@ -71,9 +71,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     const currentStatus = (current.status || "AVAILABLE") as "AVAILABLE" | "RENTED" | "MAINTENANCE";
-    const currentHasTenant = !!current.inquilinoId;
 
-    // Armamos update con whitelist (no dejamos que entren campos raros)
+    // Update whitelist
     const update: Record<string, unknown> = {};
 
     if (typeof body.code === "string") update.code = body.code.trim();
@@ -85,7 +84,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (typeof body.foto === "string") update.foto = body.foto.trim();
     if (typeof body.mapa === "string") update.mapa = body.mapa.trim();
 
-    // ✅ Validación ownerId si viene
+    // ownerId si viene
     if (body.ownerId !== undefined) {
       if (!isValidObjectId(body.ownerId)) {
         return NextResponse.json({ ok: false, message: "ownerId inválido" }, { status: 400 });
@@ -93,17 +92,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       const owner = await Person.findById(body.ownerId).lean<{ type?: string } | null>();
       if (!owner) return NextResponse.json({ ok: false, message: "ownerId no existe" }, { status: 400 });
-      if (owner.type !== "OWNER") return NextResponse.json({ ok: false, message: "ownerId debe ser OWNER" }, { status: 400 });
+      if (owner.type !== "OWNER") {
+        return NextResponse.json({ ok: false, message: "ownerId debe ser OWNER" }, { status: 400 });
+      }
 
       update.ownerId = new Types.ObjectId(body.ownerId);
     }
 
-    // ✅ Mantenimiento (campos)
+    // mantenimiento campos
     if (body.maintenanceNotes !== undefined) update.maintenanceNotes = String(body.maintenanceNotes ?? "").trim();
     if (body.maintenanceFrom !== undefined) update.maintenanceFrom = toDateOrNull(body.maintenanceFrom);
     if (body.maintenanceTo !== undefined) update.maintenanceTo = toDateOrNull(body.maintenanceTo);
 
-    // ✅ Cambio explícito de status (con reglas)
+    // ✅ STATUS: respetar lo que viene (AVAILABLE / RENTED / MAINTENANCE)
     if (body.status !== undefined) {
       if (!["AVAILABLE", "RENTED", "MAINTENANCE"].includes(body.status)) {
         return NextResponse.json({ ok: false, message: "status inválido" }, { status: 400 });
@@ -115,16 +116,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         update.inquilinoId = null;
         update.availableFrom = null;
       } else {
-        // salir de mantenimiento (o setear manualmente):
-        // - si hay inquilino (actual) => RENTED
-        // - si no => AVAILABLE
-        const nextStatus = currentHasTenant ? "RENTED" : "AVAILABLE";
-        update.status = body.status === "RENTED" ? (currentHasTenant ? "RENTED" : "AVAILABLE") : nextStatus;
-
-        if (!currentHasTenant) {
-          update.inquilinoId = null;
-          update.availableFrom = null;
-        }
+        // AVAILABLE o RENTED: se respeta
+        update.status = body.status;
+        // si sale de mantenimiento, no tocar inquilinoId acá (lo controla el PATCH de inquilinoId)
       }
     }
 
@@ -161,7 +155,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    // availableFrom (si querés permitirlo manualmente; por ahora lo dejamos controlado)
+    // availableFrom (si lo usás manualmente)
     if (body.availableFrom !== undefined) {
       update.availableFrom = toDateOrNull(body.availableFrom);
     }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { dbConnect } from "@/lib/mongoose";
+
 import Counter from "@/models/Counter";
 import Person from "@/models/Person";
 import Property from "@/models/Property";
@@ -32,23 +33,10 @@ function isValidObjectId(v: unknown): v is string {
   return typeof v === "string" && Types.ObjectId.isValid(v);
 }
 
-export async function GET() {
-  try {
-    await dbConnect();
-
-    const properties = await Property.find({ tenantId: TENANT_ID })
-      .sort({ createdAt: -1 })
-      .populate({ path: "ownerId", select: "_id code fullName type email phone" })
-      .populate({ path: "inquilinoId", select: "_id code fullName type email phone" })
-      .lean();
-
-    return NextResponse.json({ ok: true, properties });
-  } catch (err: unknown) {
-    return NextResponse.json(
-      { ok: false, message: "Failed to fetch properties", error: getErrorMessage(err) },
-      { status: 500 }
-    );
-  }
+function toDateOrNull(v: unknown): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 type CreateBody = {
@@ -74,17 +62,30 @@ type CreateBody = {
   maintenanceTo?: string | Date | null;
 };
 
-function toDateOrNull(v: unknown): Date | null {
-  if (v === null || v === undefined || v === "") return null;
-  const d = v instanceof Date ? v : new Date(String(v));
-  return Number.isNaN(d.getTime()) ? null : d;
+export async function GET() {
+  try {
+    await dbConnect();
+
+    const properties = await Property.find({ tenantId: TENANT_ID })
+      .sort({ createdAt: -1 })
+      .populate({ path: "ownerId", select: "_id code fullName type email phone" })
+      .populate({ path: "inquilinoId", select: "_id code fullName type email phone" })
+      .lean();
+
+    return NextResponse.json({ ok: true, properties });
+  } catch (err: unknown) {
+    return NextResponse.json(
+      { ok: false, message: "Failed to fetch properties", error: getErrorMessage(err) },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: Request) {
   try {
     await dbConnect();
 
-    const body = (await req.json()) as CreateBody;
+    const body = (await req.json().catch(() => ({}))) as CreateBody;
 
     if (!body.addressLine || !String(body.addressLine).trim()) {
       return NextResponse.json({ ok: false, message: "addressLine es obligatorio" }, { status: 400 });
@@ -106,11 +107,13 @@ export async function POST(req: Request) {
       if (!isValidObjectId(body.inquilinoId)) {
         return NextResponse.json({ ok: false, message: "inquilinoId inválido" }, { status: 400 });
       }
+
       const tenant = await Person.findById(body.inquilinoId).lean<{ type?: string } | null>();
       if (!tenant) return NextResponse.json({ ok: false, message: "inquilinoId no existe" }, { status: 400 });
       if (tenant.type !== "TENANT") {
         return NextResponse.json({ ok: false, message: "inquilinoId debe ser TENANT" }, { status: 400 });
       }
+
       inquilinoObjectId = new Types.ObjectId(body.inquilinoId);
     }
 
@@ -124,12 +127,13 @@ export async function POST(req: Request) {
     const status: "AVAILABLE" | "RENTED" | "MAINTENANCE" =
       requestedStatus === "MAINTENANCE" ? "MAINTENANCE" : inquilinoObjectId ? "RENTED" : "AVAILABLE";
 
-    // Si está MAINTENANCE, NO permitimos inquilino desde acá (se asigna por contrato)
+    // Si está MAINTENANCE, NO permitimos inquilino desde acá
     if (status === "MAINTENANCE") {
       inquilinoObjectId = null;
     }
 
-    const property = await Property.create({
+    // ✅ Payload como Record<string, unknown> para evitar errores TS de overloads con campos custom
+    const payload: Record<string, unknown> = {
       tenantId: TENANT_ID,
       code,
       addressLine: String(body.addressLine).trim(),
@@ -148,9 +152,11 @@ export async function POST(req: Request) {
       maintenanceNotes: body.maintenanceNotes ? String(body.maintenanceNotes).trim() : "",
       maintenanceFrom: toDateOrNull(body.maintenanceFrom),
       maintenanceTo: toDateOrNull(body.maintenanceTo),
-    });
+    };
 
-    return NextResponse.json({ ok: true, propertyId: property._id, code: property.code });
+    const created = (await Property.create(payload)) as unknown as { _id: Types.ObjectId; code: string };
+
+    return NextResponse.json({ ok: true, propertyId: String(created._id), code: created.code });
   } catch (err: unknown) {
     return NextResponse.json(
       { ok: false, message: "Failed to create property", error: getErrorMessage(err) },

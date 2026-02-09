@@ -25,6 +25,11 @@ export type PropertyDoc = {
 
   availableFrom?: Date | null;
 
+  // ✅ mantenimiento
+  maintenanceNotes?: string;
+  maintenanceFrom?: Date | null;
+  maintenanceTo?: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
 };
@@ -56,6 +61,11 @@ const PropertySchema = new Schema<PropertyDoc>(
     inquilinoId: { type: Schema.Types.ObjectId, ref: "Person", default: null },
 
     availableFrom: { type: Date, default: null, index: true },
+
+    // ✅ mantenimiento
+    maintenanceNotes: { type: String, trim: true, default: "" },
+    maintenanceFrom: { type: Date, default: null },
+    maintenanceTo: { type: Date, default: null },
   },
   { timestamps: true }
 );
