@@ -40,18 +40,23 @@ type InstallmentDTO = {
   paidAt?: string | null;
 };
 
+type LateFeePolicy = { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+
 type ContractBillingDTO = {
   baseRent?: number;
   currency?: string;
   dueDay?: number;
+
   actualizacionCadaMeses?: number;
-  ajustes?: { n: number; percentage: number }[];
-  lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+  porcentajeActualizacion?: number;
+
+  lateFeePolicy?: LateFeePolicy;
   notes?: string;
 
-  // ✅ campos reales que usa la UI
   commissionMonthlyPct?: number;
   commissionTotalPct?: number;
+
+  recalcFrom?: string; // "YYYY-MM"
 };
 
 type ContractDTO = {
@@ -63,8 +68,8 @@ type ContractDTO = {
   ownerId: PersonDTO | string;
   tenantPersonId: PersonDTO | string;
 
-  startDate: string;
-  endDate: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
 
   billing?: ContractBillingDTO;
 
@@ -74,10 +79,13 @@ type ContractDTO = {
   valorCuota?: number;
   diaVencimiento?: number;
 
+  // compat si viene en root (evita TS2339)
+  dueDay?: number;
+
   // compat si viene en root
   actualizacionCadaMeses?: number;
-  ajustes?: { n: number; percentage: number }[];
-  lateFeePolicy?: { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+  porcentajeActualizacion?: number;
+  lateFeePolicy?: LateFeePolicy;
 
   commissionMonthlyPct?: number;
   commissionTotalPct?: number;
@@ -97,11 +105,9 @@ function safeText(v: unknown): string {
 function getProperty(c: ContractDTO): PropertyDTO | null {
   return typeof c.propertyId === "string" ? null : c.propertyId;
 }
-
 function getOwner(c: ContractDTO): PersonDTO | null {
   return typeof c.ownerId === "string" ? null : c.ownerId;
 }
-
 function getTenant(c: ContractDTO): PersonDTO | null {
   return typeof c.tenantPersonId === "string" ? null : c.tenantPersonId;
 }
@@ -156,7 +162,7 @@ function moraLabel(type: "NONE" | "FIXED" | "PERCENT"): string {
   return "Sin interés";
 }
 
-/** ✅ lee comisión desde billing o root, sin ts-expect-error */
+/** ✅ lee comisión desde billing o root (SIN any) */
 function getPctField(contrato: ContractDTO, field: "commissionMonthlyPct" | "commissionTotalPct"): number {
   const fromBilling = contrato.billing?.[field];
   if (typeof fromBilling === "number" && Number.isFinite(fromBilling)) return fromBilling;
@@ -165,6 +171,160 @@ function getPctField(contrato: ContractDTO, field: "commissionMonthlyPct" | "com
   if (typeof fromRoot === "number" && Number.isFinite(fromRoot)) return fromRoot;
 
   return 0;
+}
+
+/** ✅ date-only (evita UTC shift) */
+function dateOnlyLabel(iso?: string) {
+  const s = String(iso ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : iso ?? "-";
+}
+
+/* ====== schedule sin Date/UTC ====== */
+type ScheduleItem = {
+  period: string; // "2026-01"
+  dueDate: string; // "2026-01-08"
+  amount: number;
+  status: "PENDING" | "PAID";
+};
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+function parseISODateOnly(iso: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? "").trim());
+  if (!m) throw new Error(`Fecha inválida (YYYY-MM-DD): ${iso}`);
+  return { y: Number(m[1]), mo: Number(m[2]), d: Number(m[3]) }; // mo 1..12
+}
+function buildYM(y: number, mo: number) {
+  return `${y}-${pad2(mo)}`;
+}
+function clampDueDay(day: number) {
+  if (!Number.isFinite(day)) return 10;
+  return Math.min(28, Math.max(1, Math.floor(day)));
+}
+function addMonthsYM(y: number, mo: number, add: number) {
+  const idx = y * 12 + (mo - 1) + add;
+  const ny = Math.floor(idx / 12);
+  const nmo = (idx % 12) + 1;
+  return { y: ny, mo: nmo };
+}
+function roundMoney(n: number) {
+  return Math.round(n);
+}
+
+/**
+ * ✅ Cronograma sin timezone
+ * ✅ Ajuste por tramos: se aplica cada X meses
+ * ✅ porcentaje fijo
+ */
+export function generateSchedule(params: {
+  startDateISO: string; // "2026-01-01"
+  months: number;
+  baseAmount: number;
+  updateEveryMonths: number; // 0 = sin actualización
+  updatePercent: number; // ej: 8.78
+  dueDay: number; // 1..28
+}) {
+  const { startDateISO, months, baseAmount, updateEveryMonths, updatePercent } = params;
+
+  const { y: sy, mo: smo } = parseISODateOnly(startDateISO);
+  const totalMonths = Math.max(0, Math.floor(Number(months)));
+  const dueDay = clampDueDay(params.dueDay);
+
+  const schedule: ScheduleItem[] = [];
+  let currentAmount = roundMoney(Number(baseAmount) || 0);
+
+  for (let i = 0; i < totalMonths; i++) {
+    const { y, mo } = addMonthsYM(sy, smo, i);
+
+    if (updateEveryMonths > 0 && i > 0 && i % updateEveryMonths === 0) {
+      const pct = Number(updatePercent) || 0;
+      currentAmount = roundMoney(currentAmount * (1 + pct / 100));
+    }
+
+    const period = buildYM(y, mo);
+    const dueDate = `${period}-${pad2(dueDay)}`;
+
+    schedule.push({
+      period,
+      dueDate,
+      amount: currentAmount,
+      status: "PENDING",
+    });
+  }
+
+  return schedule;
+}
+
+/** ✅ period estable aunque venga vacío desde backend */
+function normalizeInstallmentPeriod(i: InstallmentDTO): string {
+  const p = String(i.period ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(p)) return p;
+
+  const d = String(i.dueDate ?? "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d.slice(0, 7);
+
+  return "";
+}
+
+/** ✅ merge completo schedule + server installments */
+function mergeInstallmentsWithSchedule(params: {
+  contract: ContractDTO;
+  serverInstallments: InstallmentDTO[];
+}): InstallmentSim[] {
+  const { contract, serverInstallments } = params;
+
+  const duracion = Number(contract.duracionMeses ?? contract.duracion) || 0;
+  const startISO = String(contract.startDate ?? "").slice(0, 10);
+  if (!duracion || !/^\d{4}-\d{2}-\d{2}$/.test(startISO)) return [];
+
+  const baseRent = Number(contract.valorCuota ?? contract.billing?.baseRent ?? contract.montoBase ?? 0);
+  const dueDay = Number(contract.diaVencimiento ?? contract.billing?.dueDay ?? contract.dueDay ?? 10);
+  const cada = Number(contract.actualizacionCadaMeses ?? contract.billing?.actualizacionCadaMeses ?? 0) || 0;
+  const pct = Number(contract.porcentajeActualizacion ?? contract.billing?.porcentajeActualizacion ?? 0) || 0;
+
+  const schedule = generateSchedule({
+    startDateISO: startISO,
+    months: duracion,
+    baseAmount: baseRent,
+    updateEveryMonths: cada,
+    updatePercent: pct,
+    dueDay,
+  });
+
+  const byPeriod = new Map<string, InstallmentDTO>();
+  for (const it of serverInstallments) {
+    const per = normalizeInstallmentPeriod(it);
+    if (per) byPeriod.set(per, it);
+  }
+
+  return schedule.map((s) => {
+    const it = byPeriod.get(s.period);
+
+    if (it) {
+      const late = Number(it.lateFeeAccrued || 0);
+      const amt = Number(it.amount || 0);
+      return {
+        periodo: s.period,
+        vencimiento: it.dueDate ? it.dueDate.slice(0, 10) : s.dueDate,
+        monto: amt,
+        montoConMora: amt + late,
+        estado: installmentStatusLabel(it.status),
+        pagado: it.status === "PAID",
+        pago: it.paidAt ? it.paidAt.slice(0, 10) : "-",
+      };
+    }
+
+    return {
+      periodo: s.period,
+      vencimiento: s.dueDate,
+      monto: s.amount,
+      montoConMora: s.amount,
+      estado: "Pendiente",
+      pagado: false,
+      pago: "-",
+    };
+  });
 }
 
 export default function ContractsPage() {
@@ -229,36 +389,6 @@ export default function ContractsPage() {
     };
   }, []);
 
-  function generarCuotasSimuladas(contrato: ContractDTO): InstallmentSim[] {
-    const duracion = Number(contrato.duracionMeses ?? contrato.duracion) || 0;
-    const baseRent = Number(contrato.valorCuota ?? contrato.billing?.baseRent ?? contrato.montoBase ?? 0);
-    if (!duracion || !contrato.startDate) return [];
-
-    const startDate = new Date(contrato.startDate);
-    if (Number.isNaN(startDate.getTime())) return [];
-    startDate.setHours(12, 0, 0, 0);
-
-    const cuotas: InstallmentSim[] = [];
-    for (let i = 0; i < duracion; i++) {
-      const fechaVenc = new Date(startDate);
-      fechaVenc.setMonth(fechaVenc.getMonth() + i);
-
-      const periodo = `${fechaVenc.getFullYear()}-${String(fechaVenc.getMonth() + 1).padStart(2, "0")}`;
-      const vencimiento = fechaVenc.toISOString().slice(0, 10);
-
-      cuotas.push({
-        periodo,
-        vencimiento,
-        monto: baseRent,
-        montoConMora: baseRent,
-        estado: "Pendiente",
-        pagado: false,
-        pago: "-",
-      });
-    }
-    return cuotas;
-  }
-
   async function openViewModal(contrato: ContractDTO) {
     setViewModal({ open: true, contrato, cuotas: [] });
     setViewLoading(true);
@@ -277,27 +407,25 @@ export default function ContractsPage() {
       const serverContract = data.contract;
       const installmentsRaw: InstallmentDTO[] = Array.isArray(data.installments) ? data.installments : [];
 
-      const cuotas = installmentsRaw.map<InstallmentSim>((i) => {
-        const late = Number(i.lateFeeAccrued || 0);
-        return {
-          periodo: i.period,
-          vencimiento: i.dueDate ? i.dueDate.slice(0, 10) : "-",
-          monto: i.amount,
-          montoConMora: i.amount + late,
-          estado: installmentStatusLabel(i.status),
-          pagado: i.status === "PAID",
-          pago: i.paidAt ? i.paidAt.slice(0, 10) : "-",
-        };
+      const cuotasMerged = mergeInstallmentsWithSchedule({
+        contract: serverContract,
+        serverInstallments: installmentsRaw,
       });
 
       setViewModal({
         open: true,
         contrato: serverContract,
-        cuotas: cuotas.length ? cuotas : generarCuotasSimuladas(serverContract),
+        cuotas: cuotasMerged,
       });
     } catch (e) {
       toast.show?.(e instanceof Error ? e.message : "No se pudieron cargar cuotas");
-      setViewModal({ open: true, contrato, cuotas: generarCuotasSimuladas(contrato) });
+
+      const cuotasMerged = mergeInstallmentsWithSchedule({
+        contract: contrato,
+        serverInstallments: [],
+      });
+
+      setViewModal({ open: true, contrato, cuotas: cuotasMerged });
     } finally {
       setViewLoading(false);
     }
@@ -572,24 +700,16 @@ export default function ContractsPage() {
                     <span className="font-semibold text-neutral-400">Inquilino:</span>{" "}
                     {getTenant(viewModal.contrato)?.fullName || "—"}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Inicio:</span>{" "}
-                    {(() => {
-                      if (!viewModal.contrato.startDate) return "-";
-                      const d = new Date(viewModal.contrato.startDate);
-                      if (isNaN(d.getTime())) return String(viewModal.contrato.startDate);
-                      return d.toLocaleDateString("es-AR", { timeZone: "UTC" });
-                    })()}
+                    {dateOnlyLabel(viewModal.contrato.startDate)}
                   </div>
                   <div>
                     <span className="font-semibold text-neutral-400">Fin:</span>{" "}
-                    {(() => {
-                      if (!viewModal.contrato.endDate) return "-";
-                      const d = new Date(viewModal.contrato.endDate);
-                      if (isNaN(d.getTime())) return String(viewModal.contrato.endDate);
-                      return d.toLocaleDateString("es-AR", { timeZone: "UTC" });
-                    })()}
+                    {dateOnlyLabel(viewModal.contrato.endDate)}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Base:</span>{" "}
                     {formatARS(
@@ -601,51 +721,44 @@ export default function ContractsPage() {
                       )
                     )}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Actualización:</span>{" "}
                     {(() => {
                       const cada =
-                        viewModal.contrato.actualizacionCadaMeses ??
-                        viewModal.contrato.billing?.actualizacionCadaMeses ??
-                        0;
+                        viewModal.contrato.actualizacionCadaMeses ?? viewModal.contrato.billing?.actualizacionCadaMeses ?? 0;
 
-                      const hasAdjustments =
-                        (viewModal.contrato.ajustes?.length ?? 0) > 0 ||
-                        (viewModal.contrato.billing?.ajustes?.length ?? 0) > 0;
-
-                      return hasAdjustments ? `${cada} meses` : "Sin";
+                      return cada > 0 ? `${cada} meses` : "Sin";
                     })()}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">% actualización:</span>{" "}
                     {(() => {
-                      const a1 = viewModal.contrato.ajustes?.[0]?.percentage;
-                      const a2 = viewModal.contrato.billing?.ajustes?.[0]?.percentage;
-                      return Number(a1 ?? a2 ?? 0);
+                      const pct =
+                        viewModal.contrato.porcentajeActualizacion ?? viewModal.contrato.billing?.porcentajeActualizacion ?? 0;
+                      return Number(pct || 0);
                     })()}
                     %
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Mora:</span>{" "}
                     {(() => {
                       const type =
-                        viewModal.contrato.lateFeePolicy?.type ??
-                        viewModal.contrato.billing?.lateFeePolicy?.type ??
-                        "NONE";
+                        viewModal.contrato.billing?.lateFeePolicy?.type ?? viewModal.contrato.lateFeePolicy?.type ?? "NONE";
                       return moraLabel(type);
                     })()}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Valor mora:</span>{" "}
                     {(() => {
                       const type =
-                        viewModal.contrato.lateFeePolicy?.type ??
-                        viewModal.contrato.billing?.lateFeePolicy?.type ??
-                        "NONE";
+                        viewModal.contrato.billing?.lateFeePolicy?.type ?? viewModal.contrato.lateFeePolicy?.type ?? "NONE";
                       const value =
-                        viewModal.contrato.lateFeePolicy?.value ??
-                        viewModal.contrato.billing?.lateFeePolicy?.value ??
-                        0;
+                        viewModal.contrato.billing?.lateFeePolicy?.value ?? viewModal.contrato.lateFeePolicy?.value ?? 0;
+
                       if (type === "PERCENT") return `${value}%`;
                       if (type === "FIXED") return formatARS(Number(value));
                       return "—";
@@ -666,6 +779,7 @@ export default function ContractsPage() {
                       return `${pct}% ($${monto.toLocaleString("es-AR")})`;
                     })()}
                   </div>
+
                   <div>
                     <span className="font-semibold text-neutral-400">Comisión total:</span>{" "}
                     {(() => {
@@ -710,7 +824,7 @@ export default function ContractsPage() {
                             key={`${c.periodo}-${idx}`}
                             className="grid grid-cols-4 gap-2 px-3 py-2 text-xs text-neutral-200"
                           >
-                            <div>{c.periodo}</div>
+                            <div>{c.periodo || "—"}</div>
                             <div>{c.vencimiento}</div>
                             <div>{formatARS(c.montoConMora)}</div>
                             <div>{c.estado}</div>

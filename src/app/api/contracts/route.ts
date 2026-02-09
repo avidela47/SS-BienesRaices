@@ -1,6 +1,41 @@
 import { NextResponse } from "next/server";
 import { listContracts, createContract } from "@/lib/contracts/contractService";
 
+type LateFeePolicy = { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+
+function genContractCode() {
+  const d = new Date();
+  const y = String(d.getFullYear());
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `CT-${y}${m}${day}-${rand}`;
+}
+
+function toStr(v: unknown) {
+  return typeof v === "string" ? v : String(v ?? "");
+}
+
+function toNum(v: unknown, def = 0): number {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : def;
+}
+
+function toOptionalNum(v: unknown): number | undefined {
+  const n = toNum(v, NaN);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseLateFeePolicy(v: unknown): LateFeePolicy | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  const t = o.type;
+  const type: LateFeePolicy["type"] =
+    t === "FIXED" || t === "PERCENT" || t === "NONE" ? t : "NONE";
+  const value = toNum(o.value, 0);
+  return { type, value };
+}
+
 export async function GET() {
   try {
     const contracts = await listContracts();
@@ -15,39 +50,72 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
+    const incomingCode = typeof body.code === "string" ? body.code.trim() : "";
+    const code = incomingCode || genContractCode();
+
+    const billingIn =
+      typeof body.billing === "object" && body.billing !== null
+        ? (body.billing as Record<string, unknown>)
+        : null;
+
+    const montoBase = toNum(body.montoBase ?? billingIn?.baseRent ?? 0, 0);
+    const currencyRaw = (body.currency ?? billingIn?.currency) as unknown;
+    const currency =
+      (typeof currencyRaw === "string" ? currencyRaw : "ARS").trim() || "ARS";
+
+    const dueDay = toNum(body.dueDay ?? billingIn?.dueDay ?? 10, 10);
+
+    const actualizacionCadaMeses = toOptionalNum(
+      body.actualizacionCadaMeses ?? billingIn?.actualizacionCadaMeses
+    );
+
+    const porcentajeActualizacion = toOptionalNum(
+      body.porcentajeActualizacion ?? billingIn?.porcentajeActualizacion
+    );
+
+    const lateFeePolicy =
+      parseLateFeePolicy(billingIn?.lateFeePolicy ?? body.lateFeePolicy) ??
+      { type: "NONE", value: 0 };
+
     const contract = await createContract({
-      code: typeof body.code === "string" ? body.code : undefined,
+      code,
 
-      propertyId: String(body.propertyId ?? ""),
-      ownerId: String(body.ownerId ?? ""),
-      tenantPersonId: String(body.tenantPersonId ?? ""),
+      propertyId: toStr(body.propertyId).trim(),
+      ownerId: toStr(body.ownerId).trim(),
+      tenantPersonId: toStr(body.tenantPersonId).trim(),
 
-      startDate: String(body.startDate ?? ""),
+      startDate: toStr(body.startDate).trim(),
       endDate: typeof body.endDate === "string" ? body.endDate : undefined,
 
-      duracionMeses: Number(body.duracionMeses ?? 0),
-      montoBase: Number(body.montoBase ?? 0),
-      dueDay: Number(body.dueDay ?? 10),
-      currency: typeof body.currency === "string" ? body.currency : undefined,
+      duracionMeses: toNum(body.duracionMeses ?? 0, 0),
 
-      actualizacionCadaMeses: typeof body.actualizacionCadaMeses === "number" ? body.actualizacionCadaMeses : undefined,
+      // root (compat)
+      montoBase,
+      dueDay,
+      currency,
+      actualizacionCadaMeses,
+      porcentajeActualizacion,
+      lateFeePolicy,
+
       ajustes: Array.isArray(body.ajustes)
         ? body.ajustes
             .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-            .map((r) => ({ n: Number(r.n ?? 0), percentage: Number(r.percentage ?? 0) }))
+            .map((r) => ({ n: toNum(r.n ?? 0, 0), percentage: toNum(r.percentage ?? 0, 0) }))
         : undefined,
 
-      billing:
-        typeof body.billing === "object" && body.billing !== null
-          ? (() => {
-              const b = body.billing as Record<string, unknown>;
-              return {
-                notes: typeof b.notes === "string" ? b.notes : undefined,
-                commissionMonthlyPct: typeof b.commissionMonthlyPct === "number" ? b.commissionMonthlyPct : undefined,
-                commissionTotalPct: typeof b.commissionTotalPct === "number" ? b.commissionTotalPct : undefined,
-              };
-            })()
-          : undefined,
+      // billing completo
+      billing: {
+        baseRent: montoBase,
+        currency,
+        dueDay,
+        actualizacionCadaMeses: actualizacionCadaMeses ?? 0,
+        porcentajeActualizacion: porcentajeActualizacion ?? 0,
+        lateFeePolicy,
+        notes: typeof billingIn?.notes === "string" ? billingIn.notes : "Sin notas",
+
+        commissionMonthlyPct: toOptionalNum(billingIn?.commissionMonthlyPct),
+        commissionTotalPct: toOptionalNum(billingIn?.commissionTotalPct),
+      },
     });
 
     return NextResponse.json({ ok: true, contract }, { status: 201 });

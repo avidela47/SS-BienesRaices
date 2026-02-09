@@ -4,6 +4,8 @@ import { dbConnect } from "@/lib/mongoose";
 
 const TENANT_ID = "default";
 
+export type LateFeePolicy = { type: "NONE" | "FIXED" | "PERCENT"; value: number };
+
 export type CreateContractInput = {
   code?: string;
 
@@ -15,17 +17,32 @@ export type CreateContractInput = {
   endDate?: string; // YYYY-MM-DD (opcional)
 
   duracionMeses: number;
+
   montoBase: number;
   dueDay: number;
   currency?: string;
 
   actualizacionCadaMeses?: number;
+  porcentajeActualizacion?: number;
+  lateFeePolicy?: LateFeePolicy;
+
   ajustes?: { n: number; percentage: number }[];
 
   billing?: {
+    baseRent?: number;
+    currency?: string;
+    dueDay?: number;
+
+    actualizacionCadaMeses?: number;
+    porcentajeActualizacion?: number;
+
+    lateFeePolicy?: LateFeePolicy;
+
     notes?: string;
     commissionMonthlyPct?: number;
     commissionTotalPct?: number;
+
+    recalcFrom?: string; // (solo para PUT)
   };
 };
 
@@ -36,13 +53,16 @@ function isoDateOnly(v: unknown): string {
   return d;
 }
 
-// ✅ LOCAL (sin UTC) para evitar 2026-01-01 => 2025-12-31
+// LOCAL (sin UTC) para evitar 2026-01-01 => 2025-12-31
 function addMonthsDateOnly(startISO: string, months: number): string {
   const [y, m, d] = startISO.split("-").map(Number);
   const date = new Date(y, m - 1, d);
   date.setMonth(date.getMonth() + months);
 
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(
+    2,
+    "0"
+  )}`;
 }
 
 function toInt(v: unknown, def = 0) {
@@ -61,7 +81,15 @@ function mustObjectId(id: string, field: string) {
   return new Types.ObjectId(s);
 }
 
-// ✅ EXPORT NOMBRADO: createContract
+function normalizeLateFeePolicy(v: unknown): LateFeePolicy {
+  if (!v || typeof v !== "object") return { type: "NONE", value: 0 };
+  const o = v as Record<string, unknown>;
+  const t = o.type;
+  const type: LateFeePolicy["type"] = t === "FIXED" || t === "PERCENT" || t === "NONE" ? t : "NONE";
+  const value = toNum(o.value ?? 0, 0);
+  return { type, value };
+}
+
 export async function createContract(input: CreateContractInput) {
   await dbConnect();
 
@@ -76,11 +104,20 @@ export async function createContract(input: CreateContractInput) {
   const dueDay = toInt(input.dueDay, 10);
   if (dueDay < 1 || dueDay > 28) throw new Error("dueDay debe ser 1..28");
 
-  const actualizacionCadaMeses = Math.max(0, toInt(input.actualizacionCadaMeses ?? 0, 0));
+  const currency = (input.currency || "ARS").trim() || "ARS";
+
+  const actualizacionCadaMeses = Math.max(0, toInt(input.actualizacionCadaMeses ?? input.billing?.actualizacionCadaMeses ?? 0, 0));
+  const porcentajeActualizacion = toNum(input.porcentajeActualizacion ?? input.billing?.porcentajeActualizacion ?? 0, 0);
+
+  const lateFeePolicy = normalizeLateFeePolicy(input.lateFeePolicy ?? input.billing?.lateFeePolicy);
+
+  const billingBaseRent = Math.round(toNum(input.billing?.baseRent ?? montoBase, montoBase));
+  const billingCurrency = (input.billing?.currency || currency).trim() || currency;
+  const billingDueDay = toInt(input.billing?.dueDay ?? dueDay, dueDay);
 
   const doc = await Contract.create({
     tenantId: TENANT_ID,
-    code: (input.code?.trim() || "") ? input.code!.trim() : `CID-${Math.floor(Math.random() * 900 + 100)}`,
+    code: (input.code?.trim() || "") ? input.code!.trim() : `CT-${Math.floor(Math.random() * 900 + 100)}`,
     status: "ACTIVE",
 
     propertyId: mustObjectId(input.propertyId, "propertyId"),
@@ -93,26 +130,38 @@ export async function createContract(input: CreateContractInput) {
     duracionMeses,
     montoBase,
     dueDay,
-    currency: (input.currency || "ARS").trim() || "ARS",
+    currency,
 
     actualizacionCadaMeses,
+    porcentajeActualizacion,
+    lateFeePolicy,
+
     ajustes: Array.isArray(input.ajustes) ? input.ajustes : [],
 
     billing: {
+      baseRent: billingBaseRent,
+      currency: billingCurrency,
+      dueDay: billingDueDay,
+
+      actualizacionCadaMeses,
+      porcentajeActualizacion,
+
+      lateFeePolicy,
+
       notes: input.billing?.notes ?? "",
       commissionMonthlyPct: toNum(input.billing?.commissionMonthlyPct ?? 0, 0),
       commissionTotalPct: toNum(input.billing?.commissionTotalPct ?? 0, 0),
+
+      // recalcFrom NO en create (solo update)
     },
   });
 
   return doc;
 }
 
-// ✅ EXPORT NOMBRADO: listContracts
 export async function listContracts() {
   await dbConnect();
 
-  // IMPORTANTE: asegurate de que Person model esté registrado (ver nota abajo)
   const contracts = await Contract.find({ tenantId: TENANT_ID })
     .populate("propertyId")
     .populate("ownerId")
