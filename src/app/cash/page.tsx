@@ -39,7 +39,10 @@ function formatCurrency(value: number, currency = "ARS") {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
+  return new Date(value).toLocaleString("es-AR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -140,6 +143,10 @@ export default function CashPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
+  // ✅ filtros reales (los que te faltaban)
+  const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterType, setFilterType] = useState("ALL");
+
   const [pickedContract, setPickedContract] = useState<ContractPick | null>(null);
   const [contractsCache, setContractsCache] = useState<ContractPick[]>([]);
   const [contractsLoading, setContractsLoading] = useState(false);
@@ -158,7 +165,6 @@ export default function CashPage() {
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [manualMessage, setManualMessage] = useState("");
 
-  const [transferingId, setTransferingId] = useState("");
   const [viewMode, setViewMode] = useState<"summary" | "detail">("summary");
 
   // ✅ cuando el usuario aprieta "Recargar", queremos elegir SIEMPRE el primero
@@ -166,10 +172,15 @@ export default function CashPage() {
 
   const filteredQuery = useMemo(() => {
     const params = new URLSearchParams();
+
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+
+    if (filterStatus && filterStatus !== "ALL") params.set("status", filterStatus);
+    if (filterType && filterType !== "ALL") params.set("type", filterType);
+
     return params.toString();
-  }, [from, to]);
+  }, [from, to, filterStatus, filterType]);
 
   async function load() {
     setLoading(true);
@@ -206,7 +217,6 @@ export default function CashPage() {
       const income = items.filter((m) => m.type === "INCOME").reduce((acc, m) => acc + m.amount, 0);
       const commission = items.filter((m) => m.type === "COMMISSION").reduce((acc, m) => acc + m.amount, 0);
       const expense = items.filter((m) => m.type === "EXPENSE").reduce((acc, m) => acc + m.amount, 0);
-      const ownerNetMovement = items.find((m) => m.type === "EXPENSE" && m.subtype === "OWNER_NET");
 
       return {
         key,
@@ -216,8 +226,6 @@ export default function CashPage() {
         income,
         commission,
         expense,
-        status: ownerNetMovement?.status || sorted[0]?.status || "",
-        transferId: typeof ownerNetMovement?._id === "string" ? ownerNetMovement._id : undefined,
       };
     });
   }, [movements]);
@@ -251,7 +259,7 @@ export default function CashPage() {
         return;
       }
 
-      // ✅ si venís de "Recargar", elegí SIEMPRE el primero, sin rescatar el anterior
+      // ✅ si venís de "Recargar", elegí SIEMPRE el primero
       if (forcePickFirstRef.current) {
         setPickedContract(picks[0]);
         forcePickFirstRef.current = false;
@@ -371,24 +379,6 @@ export default function CashPage() {
     }
   }
 
-  async function transferMovement(id: string) {
-    setTransferingId(id);
-    try {
-      const res = await fetch(`/api/cash-movements/${id}/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transferredBy: "system" }),
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo transferir");
-      await load();
-    } catch (err) {
-      setManualMessage(err instanceof Error ? err.message : "Error desconocido");
-    } finally {
-      setTransferingId("");
-    }
-  }
-
   const canSaveManual = !!pickedContract && isValidObjectId(pickedContract._id) && !manualSubmitting;
 
   return (
@@ -405,10 +395,7 @@ export default function CashPage() {
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div
-            className="rounded-2xl border p-4"
-            style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
-          >
+          <div className="rounded-2xl border p-4" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
             <div className="text-xs uppercase tracking-wide text-white/60">Total caja</div>
             <div className="text-2xl font-semibold mt-2">{formatCurrency(summary.total)}</div>
           </div>
@@ -418,21 +405,14 @@ export default function CashPage() {
             { label: "Pendiente", key: "PENDING" },
             { label: "Listo a transferir", key: "READY_TO_TRANSFER" },
           ].map((item) => (
-            <div
-              key={item.key}
-              className="rounded-2xl border p-4"
-              style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
-            >
+            <div key={item.key} className="rounded-2xl border p-4" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
               <div className="text-xs uppercase tracking-wide text-white/60">{item.label}</div>
               <div className="text-xl font-semibold mt-2">{formatCurrency(summary.byStatus[item.key] || 0)}</div>
             </div>
           ))}
         </div>
 
-        <div
-          className="mt-6 rounded-2xl border p-6"
-          style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}
-        >
+        <div className="mt-6 rounded-2xl border p-6" style={{ borderColor: "var(--benetton-border)", background: "var(--benetton-card)" }}>
           {/* MOVIMIENTO MANUAL */}
           <div className="mb-6 rounded-xl border border-white/10 p-4 bg-white/5">
             <div className="flex items-center justify-between gap-3">
@@ -445,8 +425,7 @@ export default function CashPage() {
                 type="button"
                 className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 transition disabled:opacity-60"
                 onClick={() => {
-                  // ✅ reset TOTAL
-                  forcePickFirstRef.current = true; // ✅ al volver, elegir primero sí o sí
+                  forcePickFirstRef.current = true;
                   setContractSearch("");
                   setPickedContract(null);
                   setManualFiles([]);
@@ -491,8 +470,6 @@ export default function CashPage() {
                   </option>
                 ))}
               </select>
-
-              {/* ✅ ID oculto: eliminado */}
             </div>
 
             <div className="mt-3 grid grid-cols-1 md:grid-cols-7 gap-3">
@@ -563,7 +540,6 @@ export default function CashPage() {
                 </select>
               </div>
 
-              {/* ✅ Comprobantes (cursor pointer real) */}
               <div className="md:col-span-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs text-white/60 cursor-pointer select-none">Comprobantes (PDF/JPG/PNG)</label>
@@ -641,7 +617,7 @@ export default function CashPage() {
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div>
               <h2 className="text-lg font-semibold">Movimientos</h2>
-              <p className="text-xs text-white/60">Filtrá por rango de fechas.</p>
+              <p className="text-xs text-white/60">Filtrá por rango de fechas, estado y tipo.</p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -649,9 +625,7 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("summary")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "summary"
-                    ? "border-emerald-400/40 bg-emerald-400/10"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "summary" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Resumen
@@ -660,9 +634,7 @@ export default function CashPage() {
                 type="button"
                 onClick={() => setViewMode("detail")}
                 className={`rounded-xl border px-3 py-2 text-xs transition ${
-                  viewMode === "detail"
-                    ? "border-emerald-400/40 bg-emerald-400/10"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                  viewMode === "detail" ? "border-emerald-400/40 bg-emerald-400/10" : "border-white/10 bg-white/5 hover:bg-white/10"
                 }`}
               >
                 Detalle
@@ -679,6 +651,7 @@ export default function CashPage() {
                   className="block mt-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
                 />
               </div>
+
               <div>
                 <label className="text-xs text-white/60">Hasta</label>
                 <input
@@ -688,6 +661,40 @@ export default function CashPage() {
                   className="block mt-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
                 />
               </div>
+
+              <div>
+                <label className="text-xs text-white/60">Estado</label>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="block mt-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
+                >
+                  <option value="ALL">Todos</option>
+                  <option value="COLLECTED">Cobrado</option>
+                  <option value="PENDING">Pendiente</option>
+                  <option value="RETAINED">Retenido</option>
+                  <option value="READY_TO_TRANSFER">Listo</option>
+                  <option value="TRANSFERRED">Transferido</option>
+                  <option value="VOID">Anulado</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-white/60">Tipo</label>
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                  className="block mt-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-xs text-white outline-none"
+                >
+                  <option value="ALL">Todos</option>
+                  <option value="INCOME">Ingreso</option>
+                  <option value="EXPENSE">Egreso</option>
+                  <option value="COMMISSION">Comisión</option>
+                  <option value="RETENTION">Retención</option>
+                  <option value="ADJUSTMENT">Ajuste</option>
+                </select>
+              </div>
+
               <button
                 type="button"
                 onClick={() => void load()}
@@ -704,7 +711,7 @@ export default function CashPage() {
           ) : loading ? (
             <div className="mt-4 text-sm text-white/60">Cargando movimientos…</div>
           ) : movements.length === 0 ? (
-            <div className="mt-4 text-sm text-white/60">No hay movimientos en este período.</div>
+            <div className="mt-4 text-sm text-white/60">No hay movimientos con estos filtros.</div>
           ) : viewMode === "summary" ? (
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-12 gap-0 px-4 py-3 text-xs uppercase tracking-wide text-neutral-300 bg-white/5">
@@ -717,39 +724,23 @@ export default function CashPage() {
                 <div className="col-span-1 text-right">Acc.</div>
               </div>
 
-              {groupedRows.map((row) => {
-                const canTransfer = row.status === "READY_TO_TRANSFER" && typeof row.transferId === "string" && row.transferId.length > 0;
-                const transferId = canTransfer ? row.transferId : null;
-
-                return (
-                  <div key={row.key} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10">
-                    <div className="col-span-2 text-white/80">{row.date ? formatDate(row.date) : "—"}</div>
-                    <div className="col-span-2 text-white/70 truncate" title={row.contractLabel}>
-                      {row.contractLabel || "—"}
-                    </div>
-                    <div className="col-span-2 text-white/70 truncate" title={row.propertyLabel}>
-                      {row.propertyLabel || "—"}
-                    </div>
-                    <div className="col-span-2 font-semibold">{row.income ? formatCurrency(row.income) : "—"}</div>
-                    <div className="col-span-2 text-white/80">{row.commission ? formatCurrency(row.commission) : "—"}</div>
-                    <div className="col-span-1 text-white/80">{row.expense ? formatCurrency(row.expense) : "—"}</div>
-                    <div className="col-span-1 flex justify-end">
-                      {transferId ? (
-                        <button
-                          type="button"
-                          onClick={() => void transferMovement(transferId)}
-                          disabled={transferingId === transferId}
-                          className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-xs hover:bg-emerald-400/20 disabled:opacity-60"
-                        >
-                          {transferingId === transferId ? "..." : "Transferir"}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-white/40">—</span>
-                      )}
-                    </div>
+              {groupedRows.map((row) => (
+                <div key={row.key} className="grid grid-cols-12 px-4 py-3 text-sm border-t border-white/10">
+                  <div className="col-span-2 text-white/80">{row.date ? formatDate(row.date) : "—"}</div>
+                  <div className="col-span-2 text-white/70 truncate" title={row.contractLabel}>
+                    {row.contractLabel || "—"}
                   </div>
-                );
-              })}
+                  <div className="col-span-2 text-white/70 truncate" title={row.propertyLabel}>
+                    {row.propertyLabel || "—"}
+                  </div>
+                  <div className="col-span-2 font-semibold">{row.income ? formatCurrency(row.income) : "—"}</div>
+                  <div className="col-span-2 text-white/80">{row.commission ? formatCurrency(row.commission) : "—"}</div>
+                  <div className="col-span-1 text-white/80">{row.expense ? formatCurrency(row.expense) : "—"}</div>
+                  <div className="col-span-1 flex justify-end">
+                    <span className="text-xs text-white/40">—</span>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
@@ -780,18 +771,7 @@ export default function CashPage() {
                     {movement.propertyLabel || movement.propertyId}
                   </div>
                   <div className="col-span-1 flex justify-end">
-                    {movement.status === "READY_TO_TRANSFER" ? (
-                      <button
-                        type="button"
-                        onClick={() => void transferMovement(movement._id)}
-                        disabled={transferingId === movement._id}
-                        className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-xs hover:bg-emerald-400/20 disabled:opacity-60"
-                      >
-                        {transferingId === movement._id ? "..." : "Transferir"}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-white/40">—</span>
-                    )}
+                    <span className="text-xs text-white/40">—</span>
                   </div>
                 </div>
               ))}
@@ -802,5 +782,4 @@ export default function CashPage() {
     </main>
   );
 }
-
 
